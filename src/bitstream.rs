@@ -59,6 +59,23 @@ impl<'a> Bitstream<'a> {
         }
     }
 
+    pub fn peek_bits(&self, bits: u8) -> u16 {
+        // Copy paste of `read_bits`, but without advancing the buffer.
+        assert!(bits <= 16);
+
+        if bits <= self.remaining {
+            self.n.rotate_left(bits as u32) & ((1 << bits) - 1)
+        } else {
+            let hi = self.n.rotate_left(self.remaining as u32) & ((1 << self.remaining) - 1);
+            let bits = bits - self.remaining;
+
+            let n = u16::from_le_bytes([self.buffer[0], self.buffer[1]]);
+            let lo = n.rotate_left(bits as u32) & ((1u32 << bits) as u16).wrapping_sub(1);
+
+            ((hi as u32) << bits) as u16 | lo
+        }
+    }
+
     pub fn read_u16_le(&mut self) -> u16 {
         self.read_bits(16).swap_bytes()
     }
