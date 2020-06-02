@@ -4,57 +4,69 @@
 /// > A, B, C, D, E, F, the output byte stream MUST be as [ 0| 1| 2| 3|...|30|31].
 pub struct Bitstream<'a> {
     buffer: &'a [u8],
-    bit_pos: u8,
-    output: [u8; 4],
+    // Next number in the bitstream.
+    n: u16,
+    // How many bits left in the current `n`.
+    remaining: u8,
 }
 
 impl<'a> Bitstream<'a> {
     pub fn new(buffer: &'a [u8]) -> Self {
         Self {
             buffer,
-            bit_pos: 0,
-            output: [0; 4],
+            n: 0,
+            remaining: 0,
         }
     }
 
-    pub fn read_bit(&mut self) -> u8 {
-        let n = u16::from_le_bytes([self.buffer[0], self.buffer[1]]);
-
-        // What the description means is basically that we read the bits left-to-right
-        // (similar to how they would be written out in code), using the MSB first.
-        let bit = ((n >> (15 - self.bit_pos)) & 1) as u8;
-
-        // The way we advance in the buffer of 16-bit integer is by advancing 2 bytes as
-        // soon as the bit position wraps around the next 16-bit integer (modulo 16).
-        self.bit_pos = if self.bit_pos == 15 {
-            self.buffer = &self.buffer[2..];
-            0
-        } else {
-            self.bit_pos + 1
-        };
-
-        bit
+    // Advance the buffer to the next 16-bit integer.
+    #[inline(always)]
+    fn advance_buffer(&mut self) {
+        self.remaining = 16;
+        self.n = u16::from_le_bytes([self.buffer[0], self.buffer[1]]);
+        self.buffer = &self.buffer[2..];
     }
 
-    pub fn read_bits(&mut self, bits: u8) -> &[u8] {
-        let bits = bits as usize;
-        assert!(bits <= self.output.len() * 8);
+    pub fn read_bit(&mut self) -> u16 {
+        if self.remaining == 0 {
+            self.advance_buffer();
+        }
 
-        self.output.iter_mut().for_each(|x| *x = 0);
-        (0..bits).for_each(|i| {
-            self.output[i / 8] = (self.output[i / 8] << 1) | self.read_bit();
-        });
-        &self.output[..(bits + 7) / 8]
+        self.remaining -= 1;
+        self.n.rotate_left(1) & 1
+    }
+
+    pub fn read_bits(&mut self, bits: u8) -> u16 {
+        assert!(bits <= 16);
+        debug_assert!(self.remaining <= 16);
+
+        if bits <= self.remaining {
+            self.remaining -= bits;
+            self.n = self.n.rotate_left(bits as u32);
+            self.n & ((1 << bits) - 1)
+        } else {
+            // No need to store `rol` result in `n` as we're about to overwrite it.
+            let hi = self.n.rotate_left(self.remaining as u32) & ((1 << self.remaining) - 1);
+            let bits = bits - self.remaining;
+            self.advance_buffer();
+
+            self.remaining -= bits;
+            self.n = self.n.rotate_left(bits as u32);
+            // `bits` may be 16 which would overflow the left shift, operate on `u32` and trunc.
+            let lo = self.n & ((1u32 << bits) as u16).wrapping_sub(1);
+
+            ((hi as u32) << bits) as u16 | lo
+        }
     }
 
     pub fn read_u16_le(&mut self) -> u16 {
-        let buffer = self.read_bits(16);
-        u16::from_le_bytes([buffer[0], buffer[1]])
+        self.read_bits(16).swap_bytes()
     }
 
     pub fn read_u24_be(&mut self) -> u32 {
-        let buffer = self.read_bits(24);
-        u32::from_be_bytes([0, buffer[0], buffer[1], buffer[2]])
+        let hi = self.read_bits(16) as u32;
+        let lo = self.read_bits(8) as u32;
+        hi << 8 | lo
     }
 }
 
@@ -78,7 +90,7 @@ mod tests {
             .copied()
             .enumerate()
             .for_each(|(value, bit_length)| {
-                assert_eq!(bitstream.read_bits(bit_length)[0], value as u8);
+                assert_eq!(bitstream.read_bits(bit_length), value as u16);
             });
     }
 
@@ -101,13 +113,9 @@ mod tests {
 
         let mut bitstream = Bitstream::new(&bytes);
 
-        let b = bitstream.read_bits(11);
-        b.iter().for_each(|n| assert_eq!(*n, 0));
-
+        assert_eq!(bitstream.read_bits(11), 0);
         assert_eq!(bitstream.read_u16_le(), 0b00000001_10001_100);
-
-        let b = bitstream.read_bits(5);
-        b.iter().for_each(|n| assert_eq!(*n, 0));
+        assert_eq!(bitstream.read_bits(5), 0);
     }
 
     #[test]
@@ -118,12 +126,8 @@ mod tests {
 
         let mut bitstream = Bitstream::new(&bytes);
 
-        let b = bitstream.read_bits(4);
-        b.iter().for_each(|n| assert_eq!(*n, 0));
-
+        assert_eq!(bitstream.read_bits(4), 0);
         assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
-
-        let b = bitstream.read_bits(4);
-        b.iter().for_each(|n| assert_eq!(*n, 0));
+        assert_eq!(bitstream.read_bits(4), 0);
     }
 }

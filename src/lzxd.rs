@@ -1,11 +1,6 @@
 use crate::{Bitstream, BlockType, Tree, WindowSize};
 use std::convert::TryFrom;
 
-// TODO review uses of this and remove it if possible
-fn slice_as_u16_le(slice: &[u8]) -> u16 {
-    u16::from_le_bytes([slice[0], slice[1]])
-}
-
 // if position_slot < 4 {
 //     0
 // } else if position_slot >= 36 {
@@ -122,7 +117,7 @@ impl<'a> Lzxd<'a> {
     }
 
     pub fn next_block(&mut self) -> Option<()> {
-        let block_type = match BlockType::try_from(self.bitstream.read_bits(3)[0]) {
+        let block_type = match BlockType::try_from(self.bitstream.read_bits(3) as u8) {
             Ok(ty) => ty,
             Err(_) => todo!("notify error of bad block type"),
         };
@@ -137,7 +132,7 @@ impl<'a> Lzxd<'a> {
                 let mut path_lengths = vec![0u8; 8];
                 path_lengths
                     .iter_mut()
-                    .for_each(|x| *x = self.bitstream.read_bits(3)[0]);
+                    .for_each(|x| *x = self.bitstream.read_bits(3) as u8);
 
                 Some(Tree::from_path_lengths(path_lengths))
             }
@@ -214,13 +209,12 @@ impl<'a> Lzxd<'a> {
                             // This means there are some aligned bits.
                             if offset_bits >= 3 {
                                 assert!(offset_bits <= 8 + 3, "cannot use [0], read u16");
-                                verbatim_bits = (self.bitstream.read_bits(offset_bits - 3)[0]) << 3;
+                                verbatim_bits = (self.bitstream.read_bits(offset_bits - 3)) << 3;
                                 aligned_bits =
                                     aligned_offset_tree.decode_element(&mut self.bitstream);
                             } else {
                                 // 0, 1, or 2 verbatim bits
-                                assert!(offset_bits <= 8, "cannot use [0], read u16");
-                                verbatim_bits = self.bitstream.read_bits(offset_bits)[0];
+                                verbatim_bits = self.bitstream.read_bits(offset_bits);
                                 aligned_bits = 0;
                             }
 
@@ -229,8 +223,7 @@ impl<'a> Lzxd<'a> {
                                 + aligned_bits as u32
                         } else {
                             // Block_type is a verbatim_block.
-                            assert!(offset_bits <= 8, "cannot use [0], read u16");
-                            let verbatim_bits = self.bitstream.read_bits(offset_bits)[0];
+                            let verbatim_bits = self.bitstream.read_bits(offset_bits);
                             BASE_POSITION[position_slot as usize] + verbatim_bits as u32
                         };
 
@@ -250,22 +243,22 @@ impl<'a> Lzxd<'a> {
                     // > as specified in section 2.6.7, in the bitstream.
                     let match_length = if match_length == 257 {
                         // Decode the extra length.
-                        let extra_len = if self.bitstream.read_bits(1)[0] != 0 {
-                            if self.bitstream.read_bits(1)[0] != 0 {
-                                if self.bitstream.read_bits(1)[0] != 0 {
+                        let extra_len = if self.bitstream.read_bit() != 0 {
+                            if self.bitstream.read_bit() != 0 {
+                                if self.bitstream.read_bit() != 0 {
                                     // > Prefix 0b111; Number of bits to decode 15;
-                                    slice_as_u16_le(self.bitstream.read_bits(15))
+                                    self.bitstream.read_bits(15)
                                 } else {
                                     // > Prefix 0b110; Number of bits to decode 12;
-                                    slice_as_u16_le(self.bitstream.read_bits(12)) + 1024 + 256
+                                    self.bitstream.read_bits(12) + 1024 + 256
                                 }
                             } else {
                                 // > Prefix 0b10; Number of bits to decode 10;
-                                slice_as_u16_le(self.bitstream.read_bits(10)) + 256
+                                self.bitstream.read_bits(10) + 256
                             }
                         } else {
                             // > Prefix 0b0; Number of bits to decode 8;
-                            self.bitstream.read_bits(8)[0] as u16
+                            self.bitstream.read_bits(8)
                         };
 
                         // Get the match length (if match length >= 257).
