@@ -57,3 +57,73 @@ impl<'a> Bitstream<'a> {
         u32::from_be_bytes([0, buffer[0], buffer[1], buffer[2]])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_sequential() {
+        // 0..=10 and padding using the least amount of bits possible, read LTR
+        let ns = [0b0_1_10_11_100_101_110_1u16, 0b11_1000_1001_1010_00u16];
+        let bit_lengths = [1u8, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4];
+
+        // Convert input sequence of 16-bit integers to byte-stream
+        let mut bytes = Vec::with_capacity(ns.len() * 2);
+        ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
+
+        let mut bitstream = Bitstream::new(&bytes);
+        bit_lengths
+            .iter()
+            .copied()
+            .enumerate()
+            .for_each(|(value, bit_length)| {
+                assert_eq!(bitstream.read_bits(bit_length)[0], value as u8);
+            });
+    }
+
+    #[test]
+    fn read_16le_aligned() {
+        let ns = [0b11100000_00000111_u16, 0b00011111_11111000];
+        let mut bytes = Vec::with_capacity(ns.len() * 2);
+        ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
+
+        let mut bitstream = Bitstream::new(&bytes);
+        assert_eq!(bitstream.read_u16_le(), 0b00000111_11100000);
+        assert_eq!(bitstream.read_u16_le(), 0b11111000_00011111);
+    }
+
+    #[test]
+    fn read_16le_unaligned() {
+        let ns = [0b00000000000_10001u16, 0b10000000001_00000];
+        let mut bytes = Vec::with_capacity(ns.len() * 2);
+        ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
+
+        let mut bitstream = Bitstream::new(&bytes);
+
+        let b = bitstream.read_bits(11);
+        b.iter().for_each(|n| assert_eq!(*n, 0));
+
+        assert_eq!(bitstream.read_u16_le(), 0b00000001_10001_100);
+
+        let b = bitstream.read_bits(5);
+        b.iter().for_each(|n| assert_eq!(*n, 0));
+    }
+
+    #[test]
+    fn read_24be() {
+        let ns = [0b0000_1100_0001_1000_u16, 0b0001_1000_0011_0000_u16];
+        let mut bytes = Vec::with_capacity(ns.len() * 2);
+        ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
+
+        let mut bitstream = Bitstream::new(&bytes);
+
+        let b = bitstream.read_bits(4);
+        b.iter().for_each(|n| assert_eq!(*n, 0));
+
+        assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
+
+        let b = bitstream.read_bits(4);
+        b.iter().for_each(|n| assert_eq!(*n, 0));
+    }
+}
