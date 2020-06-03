@@ -203,6 +203,7 @@ impl<'a> Lzxd<'a> {
         let size = self.bitstream.read_u24_be();
 
         // Block body (head)
+        self.block_remaining = size;
         self.current_block = match ty {
             BlockType::Verbatim => {
                 self.read_main_and_length_trees();
@@ -262,28 +263,25 @@ impl<'a> Lzxd<'a> {
         // Both verbatim and aligned offset block need to decode matches and literals, so their
         // code path is mostly shared. However, uncompressed blocks are so different that they
         // get their own code path.
-        let block_size;
         let aligned_offset_tree;
         let main_tree;
         let length_tree;
         match &self.current_block {
             BlockHead::Verbatim {
-                size,
                 main_tree: main,
                 length_tree: length,
+                ..
             } => {
-                block_size = *size;
                 aligned_offset_tree = None;
                 main_tree = main;
                 length_tree = length;
             }
             BlockHead::AlignedOffset {
-                size,
                 aligned_offset_tree: aligned,
                 main_tree: main,
                 length_tree: length,
+                ..
             } => {
-                block_size = *size;
                 aligned_offset_tree = Some(aligned);
                 main_tree = main;
                 length_tree = length;
@@ -292,10 +290,9 @@ impl<'a> Lzxd<'a> {
         }
 
         // This is the code path for aligned and verbatim blocks.
-        let mut block_remaining = block_size;
-        while block_remaining != 0 {
+        while self.block_remaining != 0 {
             let mut curpos = 0;
-            let limit = usize::min(chunk_size as usize, block_remaining as usize);
+            let limit = usize::min(chunk_size as usize, self.block_remaining as usize);
             while curpos < limit {
                 // Decoding Matches and Literals (Aligned and Verbatim Blocks)
                 let main_element = main_tree.decode_element(&mut self.bitstream);
@@ -424,7 +421,7 @@ impl<'a> Lzxd<'a> {
                     curpos += match_length;
                 }
             }
-            block_remaining -= limit as u32;
+            self.block_remaining -= limit as u32;
 
             // > To ensure that an exact number of input bytes represent an exact number of
             // > output bytes for each chunk, after each 32 KB of uncompressed data is
