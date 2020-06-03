@@ -1,4 +1,4 @@
-use crate::{Bitstream, BlockType, Tree, WindowSize};
+use crate::{Bitstream, BlockHead, BlockType, Tree, WindowSize};
 use std::convert::TryFrom;
 
 // if position_slot < 4 {
@@ -61,39 +61,48 @@ const BASE_POSITION: [u32; 290] = [
     33292288, 33423360,
 ];
 
+/// > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the stream,
+/// > which can represent less than 32 KB.
+const MAX_CHUNK_SIZE: usize = 32 * 1024;
+
 pub struct Lzxd<'a> {
+    /// The window size we're working with.
     window_size: WindowSize,
+
+    /// Sliding window into which data is decompressed.
     window: Vec<u8>,
+
+    /// Bitstream over the in-memory byte buffer of compressed data.
     bitstream: Bitstream<'a>,
+
+    /// Note: this tree should not be used directly, it exists only to apply the delta of
+    /// upcoming trees to its path lengths.
     main_tree: Tree,
+
+    /// Note: this tree should not be used directly, it exists only to apply the delta of
+    /// upcoming trees to its path lengths.
     length_tree: Tree,
+
     /// > The three most recent real match offsets are kept in a list.
     r: [u32; 3],
+
+    /// Has the very first chunk been read yet? Unlike the rest, it has additional data.
+    first_chunk_read: bool,
+
+    /// This field will update after the first chunk is read, but will remain being `None`
+    /// if the E8 Call Translation is not enabled for this stream.
+    _e8_translation_size: Option<u32>,
+
+    /// Current block.
+    current_block: BlockHead,
+
+    /// The remaining size we can read from `current_block` before we need a new one.
+    block_remaining: u32,
 }
 
 impl<'a> Lzxd<'a> {
     /// NOTE: If the `WindowSize` is wrong, things won't work as expected.
     pub fn new(window_size: WindowSize, buffer: &'a [u8]) -> Self {
-        let mut bitstream = Bitstream::new(buffer);
-
-        // TODO right now we pretend to read only one chunk but there are more
-
-        // Read chunk header
-        let _chunk_size = bitstream.read_u16_le();
-        let e8_translation = bitstream.read_bit() != 0;
-        let e8_translation_size = if e8_translation {
-            let high = bitstream.read_u16_le() as u32;
-            let low = bitstream.read_u16_le() as u32;
-            Some((high << 16) | low)
-        } else {
-            None
-        };
-
-        // We don't support e8 translation yet
-        if e8_translation_size.is_some() {
-            todo!("e8 translation not implemented");
-        }
-
         // > The main tree comprises 256 elements that correspond to all possible 8-bit
         // > characters, plus 8 * NUM_POSITION_SLOTS elements that correspond to matches.
         let main_tree = Tree::new(256 + 8 * window_size.position_slots());
@@ -104,42 +113,64 @@ impl<'a> Lzxd<'a> {
         Self {
             window_size,
             window: window_size.create_buffer(),
-            bitstream,
+            bitstream: Bitstream::new(buffer),
             // > Because trees are output several times during compression of large amounts of
             // > data (multiple blocks), LZXD optimizes compression by encoding only the delta
             // > path lengths lengths between the current and previous trees.
             //
-            // Because it uses deltas, we need to store the previous value across chunks.
+            // Because it uses deltas, we need to store the previous value across blocks.
             main_tree,
             length_tree,
             // > The initial state of R0, R1, R2 is (1, 1, 1).
             r: [1, 1, 1],
+            first_chunk_read: false,
+            _e8_translation_size: None,
+            // Start with some dummy value.
+            current_block: BlockHead::Uncompressed {
+                size: 0,
+                r: [1, 1, 1],
+            },
+            block_remaining: 0,
         }
     }
 
-    pub fn next_block(&mut self) -> Option<()> {
-        let block_type = match BlockType::try_from(self.bitstream.read_bits(3) as u8) {
-            Ok(ty) => ty,
-            Err(_) => todo!("notify error of bad block type"),
-        };
+    /// Reads the header for the next chunk and returns the chunk size.
+    pub fn read_chunk_header(&mut self) -> Option<u16> {
+        if self.bitstream.is_empty() {
+            return None;
+        }
 
-        let block_size = self.bitstream.read_u24_be() as usize;
+        let chunk_size = self.bitstream.read_u16_le();
 
-        let aligned_offset_tree = match block_type {
-            BlockType::Verbatim => None,
-            BlockType::AlignedOffset => {
-                // > An aligned offset block is identical to the verbatim block except for the
-                // > presence of the aligned offset tree preceding the other trees.
-                let mut path_lengths = vec![0u8; 8];
-                path_lengths
-                    .iter_mut()
-                    .for_each(|x| *x = self.bitstream.read_bits(3) as u8);
+        // TODO instead of panicking, we should probably return proper errors (here and everywhere)
+        assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
 
-                Some(Tree::from_path_lengths(path_lengths))
+        if !self.first_chunk_read {
+            self.first_chunk_read = true;
+
+            let e8_translation = self.bitstream.read_bit() != 0;
+            self._e8_translation_size = if e8_translation {
+                let high = self.bitstream.read_u16_le() as u32;
+                let low = self.bitstream.read_u16_le() as u32;
+                Some((high << 16) | low)
+            } else {
+                None
+            };
+
+            // We don't support e8 translation yet
+            if self._e8_translation_size.is_some() {
+                todo!("e8 translation not implemented");
             }
-            BlockType::Uncompressed => todo!("uncompressed not yet implemented"),
-        };
+        }
 
+        Some(chunk_size)
+    }
+
+    /// Read the pretrees for the main and length tree, and with those also read the trees
+    /// themselves, using the path lengths from a previous tree if any.
+    ///
+    /// This is used when reading a verbatim or aligned block.
+    fn read_main_and_length_trees(&mut self) {
         // Verbatim block
         // Entry                                             Comments
         // Pretree for first 256 elements of main tree       20 elements, 4 bits each
@@ -151,22 +182,121 @@ impl<'a> Lzxd<'a> {
         // Token sequence (matches and literals)             Specified in section 2.6
         self.main_tree
             .update_range_with_pretree(&mut self.bitstream, 0..256);
+
         self.main_tree.update_range_with_pretree(
             &mut self.bitstream,
             256..256 + 8 * self.window_size.position_slots(),
         );
         self.length_tree
             .update_range_with_pretree(&mut self.bitstream, 0..249);
+    }
 
-        self.main_tree.decode_lengths();
-        self.length_tree.decode_lengths();
+    /// Read the head of the next block and store it in the `self.current_block`.
+    fn read_block_head(&mut self) {
+        // Block header
+        let ty = match BlockType::try_from(self.bitstream.read_bits(3) as u8) {
+            Ok(ty) => ty,
+            Err(_) => todo!("notify error of bad block type"),
+        };
+        let size = self.bitstream.read_u24_be();
 
+        // Block body (head)
+        self.current_block = match ty {
+            BlockType::Verbatim => {
+                self.read_main_and_length_trees();
+
+                BlockHead::Verbatim {
+                    size,
+                    main_tree: self.main_tree.clone_instance(),
+                    length_tree: self.main_tree.clone_instance(),
+                }
+            }
+            BlockType::AlignedOffset => {
+                // > An aligned offset block is identical to the verbatim block except for the
+                // > presence of the aligned offset tree preceding the other trees.
+                let aligned_offset_tree = {
+                    let mut path_lengths = vec![0u8; 8];
+                    path_lengths
+                        .iter_mut()
+                        .for_each(|x| *x = self.bitstream.read_bits(3) as u8);
+
+                    Tree::from_path_lengths(path_lengths)
+                };
+
+                self.read_main_and_length_trees();
+
+                BlockHead::AlignedOffset {
+                    size,
+                    aligned_offset_tree,
+                    main_tree: self.main_tree.clone_instance(),
+                    length_tree: self.main_tree.clone_instance(),
+                }
+            }
+            BlockType::Uncompressed => {
+                self.r = [
+                    self.bitstream.read_u32_le(),
+                    self.bitstream.read_u32_le(),
+                    self.bitstream.read_u32_le(),
+                ];
+                BlockHead::Uncompressed {
+                    size,
+                    r: self.r.clone(),
+                }
+            }
+        };
+    }
+
+    pub fn next_chunk(&mut self) -> Option<&[u8]> {
+        let chunk_size = if let Some(size) = self.read_chunk_header() {
+            size
+        } else {
+            return None;
+        };
+
+        if self.block_remaining == 0 {
+            self.read_block_head();
+        }
+
+        // Both verbatim and aligned offset block need to decode matches and literals, so their
+        // code path is mostly shared. However, uncompressed blocks are so different that they
+        // get their own code path.
+        let block_size;
+        let aligned_offset_tree;
+        let main_tree;
+        let length_tree;
+        match &self.current_block {
+            BlockHead::Verbatim {
+                size,
+                main_tree: main,
+                length_tree: length,
+            } => {
+                block_size = *size;
+                aligned_offset_tree = None;
+                main_tree = main;
+                length_tree = length;
+            }
+            BlockHead::AlignedOffset {
+                size,
+                aligned_offset_tree: aligned,
+                main_tree: main,
+                length_tree: length,
+            } => {
+                block_size = *size;
+                aligned_offset_tree = Some(aligned);
+                main_tree = main;
+                length_tree = length;
+            }
+            BlockHead::Uncompressed { size: _size, r: _r } => todo!(),
+        }
+
+        // This is the code path for aligned and verbatim blocks.
         let mut block_remaining = block_size;
         while block_remaining != 0 {
             let mut curpos = 0;
-            while curpos < self.window.len().min(block_remaining) {
+            let limit = usize::min(chunk_size as usize, block_remaining as usize);
+            while curpos < limit {
                 // Decoding Matches and Literals (Aligned and Verbatim Blocks)
-                let main_element = self.main_tree.decode_element(&mut self.bitstream);
+                let main_element = main_tree.decode_element(&mut self.bitstream);
 
                 // Check if it is a literal character.
                 if main_element < 256 {
@@ -179,7 +309,7 @@ impl<'a> Lzxd<'a> {
 
                     let match_length = if length_header == 7 {
                         // Length of the footer.
-                        self.length_tree.decode_element(&mut self.bitstream) + 7 + 2
+                        length_tree.decode_element(&mut self.bitstream) + 7 + 2
                     } else {
                         length_header + 2 // no length footer
                                           // Decoding a match length (if a match length < 257).
@@ -267,18 +397,40 @@ impl<'a> Lzxd<'a> {
                         257 + extra_len
                     } else {
                         match_length as u16
-                    } as usize;
+                    };
+
+                    let match_offset = match_offset as usize;
+                    let match_length = match_length as usize;
 
                     // Get match length and offset. Perform copy and paste work.
+                    // TODO this can be improved by avoiding %
                     for i in 0..match_length {
-                        self.window[curpos + i] = self.window[curpos + i - match_offset as usize]
+                        let li = (curpos + i) % self.window.len();
+                        let ri =
+                            (self.window.len() + curpos + i - match_offset) % self.window.len();
+                        self.window[li] = self.window[ri];
                     }
+
+                    // TODO something is still wrong around here, i don't know what it is
+                    //      guess add more debug logs and try to find at which point it breaks
 
                     curpos += match_length;
                 }
             }
+            block_remaining -= limit as u32;
 
-            block_remaining -= self.window.len().min(block_remaining);
+            // > To ensure that an exact number of input bytes represent an exact number of
+            // > output bytes for each chunk, after each 32 KB of uncompressed data is
+            // > represented in the output compressed bitstream, the output bitstream is padded
+            // > with up to 15 bits of zeros to realign the bitstream on a 16-bit boundary
+            // > (even byte boundary) for the next 32 KB of data. This results in a compressed
+            // > chunk of a byte-aligned size. The compressed chunk could be smaller than 32 KB
+            // > or larger than 32 KB if the data is incompressible when the chunk is not the
+            // > last one.
+            self.bitstream.align();
+
+            // TODO we're not returning the right thing
+            return Some(self.window.as_slice());
         }
 
         todo!()

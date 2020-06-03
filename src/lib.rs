@@ -28,6 +28,21 @@ pub use lzxd::Lzxd;
 pub(crate) use tree::Tree;
 pub use window_size::WindowSize;
 
+/// Decompress an entire in-memory `buffer` of data compressed with LZXD into another new
+/// in-memory buffer.
+///
+/// The sliding `window_size` should be known beforehand.
+///
+/// If you need more control over the output buffer, build a new `Lzxd` manually.
+pub fn decompress(buffer: &[u8], window_size: WindowSize) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut lzxd = Lzxd::new(window_size, buffer);
+    while let Some(chunk) = lzxd.next_chunk() {
+        result.extend(chunk);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,8 +52,8 @@ mod tests {
         const DATA: &[u8] = include_bytes!("../a.lzxd");
 
         let mut lzxd = Lzxd::new(WindowSize::KB64, DATA);
-        while let Some(block) = lzxd.next_block() {
-            dbg!(block);
+        while let Some(chunk) = lzxd.next_chunk() {
+            dbg!(chunk);
         }
     }
 }
