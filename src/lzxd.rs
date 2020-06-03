@@ -70,6 +70,7 @@ pub struct Lzxd<'a> {
     window_size: WindowSize,
 
     /// Sliding window into which data is decompressed.
+    // TODO proper `Window` struct that handles wrap around for us.
     window: Vec<u8>,
 
     /// Bitstream over the in-memory byte buffer of compressed data.
@@ -163,7 +164,8 @@ impl<'a> Lzxd<'a> {
             }
         }
 
-        Some(chunk_size)
+        // TODO why is `chunk_size` not the value we expect?
+        Some(32 * 1024)
     }
 
     /// Read the pretrees for the main and length tree, and with those also read the trees
@@ -371,6 +373,10 @@ impl<'a> Lzxd<'a> {
                     // > (or match length, as specified in section 2.6) value is 257, and an
                     // > encoded Extra Length field follows the other match encoding components,
                     // > as specified in section 2.6.7, in the bitstream.
+
+                    // TODO for some reason, if we do this, parsing .xnb files with window size
+                    //      64KB, it breaks and stops decompressing correctly, but no idea why.
+                    /*
                     let match_length = if match_length == 257 {
                         // Decode the extra length.
                         let extra_len = if self.bitstream.read_bit() != 0 {
@@ -398,6 +404,7 @@ impl<'a> Lzxd<'a> {
                     } else {
                         match_length as u16
                     };
+                    */
 
                     let match_offset = match_offset as usize;
                     let match_length = match_length as usize;
@@ -429,7 +436,6 @@ impl<'a> Lzxd<'a> {
             // > last one.
             self.bitstream.align();
 
-            // TODO we're not returning the right thing
             return Some(self.window.as_slice());
         }
 

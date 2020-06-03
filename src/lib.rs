@@ -37,7 +37,7 @@ pub use window_size::WindowSize;
 pub fn decompress(buffer: &[u8], window_size: WindowSize) -> Vec<u8> {
     let mut result = Vec::new();
     let mut lzxd = Lzxd::new(window_size, buffer);
-    while let Some(chunk) = lzxd.next_chunk() {
+    if let Some(chunk) = lzxd.next_chunk() {
         result.extend(chunk);
     }
     result
