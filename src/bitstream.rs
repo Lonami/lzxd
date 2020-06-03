@@ -33,7 +33,8 @@ impl<'a> Bitstream<'a> {
         }
 
         self.remaining -= 1;
-        self.n.rotate_left(1) & 1
+        self.n = self.n.rotate_left(1);
+        self.n & 1
     }
 
     pub fn read_bits(&mut self, bits: u8) -> u16 {
@@ -146,5 +147,14 @@ mod tests {
         assert_eq!(bitstream.read_bits(4), 0);
         assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
         assert_eq!(bitstream.read_bits(4), 0);
+    }
+
+    #[test]
+    fn check_read_bit() {
+        let bytes = [0b0110_1001, 0b1001_0110];
+        let mut bitstream_1 = Bitstream::new(&bytes);
+        let mut bitstream_n = Bitstream::new(&bytes);
+
+        (0..16).for_each(|_| assert_eq!(bitstream_1.read_bit(), bitstream_n.read_bits(1)));
     }
 }
