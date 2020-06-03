@@ -1,6 +1,7 @@
 use crate::Bitstream;
 use std::ops::Range;
 
+#[derive(Debug, Clone)]
 pub struct Tree {
     // > Each tree element can have a path length of [0, 16], where a zero path length indicates
     // > that the element has a zero frequency and is not present in the tree.
@@ -34,7 +35,7 @@ impl Tree {
 
     // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
     // > identical tree,
-    pub fn decode_lengths(&mut self) {
+    fn decode_lengths(&mut self) {
         // The path lengths contains the bit indices or zero if its not present, so find the
         // highest path length to determine how big our tree needs to be.
         self.largest_length = *self.path_lengths.iter().max().expect("empty path lengths");
@@ -146,6 +147,14 @@ impl Tree {
                 _ => panic!(format!("invalid pretree code element {}", code)),
             };
         }
+    }
+
+    /// Clone this tree into an instance that can be used to decode elements.
+    // TODO this should probably be a separate type, maybe called create_instance
+    pub fn clone_instance(&self) -> Self {
+        let mut instance = self.clone();
+        instance.decode_lengths();
+        instance
     }
 }
 
