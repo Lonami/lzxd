@@ -208,7 +208,7 @@ impl<'a> Lzxd<'a> {
                 BlockHead::Verbatim {
                     size,
                     main_tree: self.main_tree.create_instance(),
-                    length_tree: self.main_tree.create_instance(),
+                    length_tree: self.length_tree.create_instance(),
                 }
             }
             BlockType::AlignedOffset => {
@@ -229,7 +229,7 @@ impl<'a> Lzxd<'a> {
                     size,
                     aligned_offset_tree,
                     main_tree: self.main_tree.create_instance(),
-                    length_tree: self.main_tree.create_instance(),
+                    length_tree: self.length_tree.create_instance(),
                 }
             }
             BlockType::Uncompressed => {
