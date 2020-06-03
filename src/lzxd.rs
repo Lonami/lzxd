@@ -73,6 +73,9 @@ pub struct Lzxd<'a> {
     // TODO proper `Window` struct that handles wrap around for us.
     window: Vec<u8>,
 
+    /// Current position into the sliding window.
+    pos: usize,
+
     /// Bitstream over the in-memory byte buffer of compressed data.
     bitstream: Bitstream<'a>,
 
@@ -114,6 +117,7 @@ impl<'a> Lzxd<'a> {
         Self {
             window_size,
             window: window_size.create_buffer(),
+            pos: 0,
             bitstream: Bitstream::new(buffer),
             // > Because trees are output several times during compression of large amounts of
             // > data (multiple blocks), LZXD optimizes compression by encoding only the delta
@@ -142,6 +146,7 @@ impl<'a> Lzxd<'a> {
         }
 
         let chunk_size = self.bitstream.read_u16_le();
+        dbg!(chunk_size);
 
         // TODO instead of panicking, we should probably return proper errors (here and everywhere)
         assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
@@ -289,11 +294,14 @@ impl<'a> Lzxd<'a> {
             BlockHead::Uncompressed { size: _size, r: _r } => todo!(),
         }
 
+        eprintln!("next: {}", self.bitstream.peek_bits(16));
+
         // This is the code path for aligned and verbatim blocks.
         while self.block_remaining != 0 {
-            let mut curpos = 0;
+            let mut curpos = self.pos;
             let limit = usize::min(chunk_size as usize, self.block_remaining as usize);
-            while curpos < limit {
+            let end = curpos + limit;
+            while curpos < end {
                 // Decoding Matches and Literals (Aligned and Verbatim Blocks)
                 let main_element = main_tree.decode_element(&mut self.bitstream);
 
@@ -433,7 +441,9 @@ impl<'a> Lzxd<'a> {
             // > last one.
             self.bitstream.align();
 
-            return Some(self.window.as_slice());
+            let start = self.pos;
+            self.pos = curpos % self.window.len();
+            return Some(&self.window[start..end]);
         }
 
         todo!()
