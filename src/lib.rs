@@ -17,13 +17,13 @@
 //! [LZX DELTA Compression and Decompression]: https://docs.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-patch/cc78752a-b4af-4eee-88cb-01f4d8a4c2bf
 //! [UASDC]: https://ieeexplore.ieee.org/document/1055714
 mod bitstream;
-mod block_type;
+mod block;
 mod lzxd;
 mod tree;
 mod window_size;
 
 pub(crate) use bitstream::Bitstream;
-pub(crate) use block_type::BlockType;
+pub(crate) use block::{BlockHead, BlockType};
 pub use lzxd::Lzxd;
 pub(crate) use tree::Tree;
 pub use window_size::WindowSize;
