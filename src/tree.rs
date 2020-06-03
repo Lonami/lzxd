@@ -1,45 +1,47 @@
 use crate::Bitstream;
+use std::num::NonZeroU8;
 use std::ops::Range;
 
-#[derive(Debug, Clone)]
-pub struct Tree {
+/// The canonical tree cannot be used to decode elements. Instead, it behaves like a cast for
+/// instances of the actual tree that can decode elements efficiently.
+#[derive(Debug)]
+pub struct CanonicalTree {
     // > Each tree element can have a path length of [0, 16], where a zero path length indicates
     // > that the element has a zero frequency and is not present in the tree.
     //
     // We represent them as `u8` due to their very short range.
     path_lengths: Vec<u8>,
-    largest_length: u8,
+}
+
+#[derive(Debug)]
+pub struct Tree {
+    path_lengths: Vec<u8>,
+    largest_length: NonZeroU8,
     huffman_tree: Vec<u16>,
 }
 
-impl Tree {
+impl CanonicalTree {
     pub fn new(count: usize) -> Self {
         Self {
             // > In the case of the very first such tree, the delta is calculated against a tree
             // > in which all elements have a zero path length.
             path_lengths: vec![0; count],
-            largest_length: 0,
-            huffman_tree: vec![],
         }
     }
 
-    pub fn from_path_lengths(path_lengths: Vec<u8>) -> Self {
-        let mut tree = Self {
-            path_lengths,
-            largest_length: 0,
-            huffman_tree: vec![],
-        };
-        tree.decode_lengths();
-        tree
-    }
-
+    /// Create a new `Tree` instance from this cast that can be used to decode elements.
+    ///
+    /// This method transforms the canonical Huffman tree into a different structure that can
+    /// be used to better decode elements.
     // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
     // > identical tree,
-    fn decode_lengths(&mut self) {
+    pub fn create_instance(&self) -> Tree {
         // The path lengths contains the bit indices or zero if its not present, so find the
         // highest path length to determine how big our tree needs to be.
-        self.largest_length = *self.path_lengths.iter().max().expect("empty path lengths");
-        self.huffman_tree = vec![0; 1 << self.largest_length];
+        let largest_length =
+            NonZeroU8::new(*self.path_lengths.iter().max().expect("empty path lengths"))
+                .expect("all path lengths were 0");
+        let mut huffman_tree = vec![0; 1 << largest_length.get()];
 
         // > a zero path length indicates that the element has a zero frequency and is not
         // > present in the tree. Tree elements are output in sequential order starting with the
@@ -47,8 +49,8 @@ impl Tree {
         //
         // We start at the MSB, 1, and write the tree elements in sequential order from index 0.
         let mut pos = 0;
-        for bit in 1..=self.largest_length {
-            let amount = 1 << (self.largest_length - bit);
+        for bit in 1..=largest_length.get() {
+            let amount = 1 << (largest_length.get() - bit);
 
             // The codes correspond with the indices of the path length (because
             // `path_lengths[code]` is its path length).
@@ -56,7 +58,7 @@ impl Tree {
                 // As soon as a code's path length matches with our bit index write the code as
                 // many times as the bit index itself represents.
                 if self.path_lengths[code] == bit {
-                    self.huffman_tree[pos..pos + amount]
+                    huffman_tree[pos..pos + amount]
                         .iter_mut()
                         .for_each(|x| *x = code as u16);
 
@@ -66,22 +68,13 @@ impl Tree {
         }
 
         // If we didn't fill the entire table, the path lengths were wrong.
-        assert_eq!(pos, self.huffman_tree.len());
-    }
+        assert_eq!(pos, huffman_tree.len());
 
-    pub fn decode_element(&self, bitstream: &mut Bitstream) -> u16 {
-        assert!(
-            self.largest_length != 0,
-            "path lengths have not been decoded"
-        );
-
-        // Now we perform the inverse translation, peeking as many bits as our tree is…
-        let code = self.huffman_tree[bitstream.peek_bits(self.largest_length) as usize];
-
-        // …and advancing the stream for as many bits this code actually takes (read to seek).
-        bitstream.read_bits(self.path_lengths[code as usize]);
-
-        code
+        Tree {
+            path_lengths: self.path_lengths.clone(),
+            largest_length,
+            huffman_tree,
+        }
     }
 
     // Note: the tree already exists and is used to apply the deltas.
@@ -148,13 +141,22 @@ impl Tree {
             };
         }
     }
+}
 
-    /// Clone this tree into an instance that can be used to decode elements.
-    // TODO this should probably be a separate type, maybe called create_instance
-    pub fn clone_instance(&self) -> Self {
-        let mut instance = self.clone();
-        instance.decode_lengths();
-        instance
+impl Tree {
+    /// Create a new usable tree instance directly from known path lengths.
+    pub fn from_path_lengths(path_lengths: Vec<u8>) -> Self {
+        CanonicalTree { path_lengths }.create_instance()
+    }
+
+    pub fn decode_element(&self, bitstream: &mut Bitstream) -> u16 {
+        // Perform the inverse translation, peeking as many bits as our tree is…
+        let code = self.huffman_tree[bitstream.peek_bits(self.largest_length.get()) as usize];
+
+        // …and advancing the stream for as many bits this code actually takes (read to seek).
+        bitstream.read_bits(self.path_lengths[code as usize]);
+
+        code
     }
 }
 
@@ -168,7 +170,6 @@ mod tests {
         let mut tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
         let value_count = vec![(2, 32), (6, 16), (3, 8), (4, 4), (1, 2), (0, 1), (5, 1)];
 
-        tree.decode_lengths();
         let mut i = 0;
         for (value, count) in value_count.into_iter() {
             (0..count).for_each(|_| {
@@ -200,7 +201,6 @@ mod tests {
             (15, 1),
         ];
 
-        tree.decode_lengths();
         let mut i = 0;
         for (value, count) in value_count.into_iter() {
             (0..count).for_each(|_| {
@@ -213,7 +213,6 @@ mod tests {
     #[test]
     fn decode_elements() {
         let mut tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
-        tree.decode_lengths();
 
         let buffer = [0x5b, 0xda, 0x3f, 0xf8];
         let mut bitstream = Bitstream::new(&buffer);

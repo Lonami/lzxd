@@ -1,4 +1,4 @@
-use crate::{Bitstream, BlockHead, BlockType, Tree, WindowSize};
+use crate::{Bitstream, BlockHead, BlockType, CanonicalTree, Tree, WindowSize};
 use std::convert::TryFrom;
 
 // if position_slot < 4 {
@@ -75,13 +75,13 @@ pub struct Lzxd<'a> {
     /// Bitstream over the in-memory byte buffer of compressed data.
     bitstream: Bitstream<'a>,
 
-    /// Note: this tree should not be used directly, it exists only to apply the delta of
-    /// upcoming trees to its path lengths.
-    main_tree: Tree,
+    /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
+    /// to its path lengths.
+    main_tree: CanonicalTree,
 
-    /// Note: this tree should not be used directly, it exists only to apply the delta of
-    /// upcoming trees to its path lengths.
-    length_tree: Tree,
+    /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
+    /// to its path lengths.
+    length_tree: CanonicalTree,
 
     /// > The three most recent real match offsets are kept in a list.
     r: [u32; 3],
@@ -105,10 +105,10 @@ impl<'a> Lzxd<'a> {
     pub fn new(window_size: WindowSize, buffer: &'a [u8]) -> Self {
         // > The main tree comprises 256 elements that correspond to all possible 8-bit
         // > characters, plus 8 * NUM_POSITION_SLOTS elements that correspond to matches.
-        let main_tree = Tree::new(256 + 8 * window_size.position_slots());
+        let main_tree = CanonicalTree::new(256 + 8 * window_size.position_slots());
 
         // > The length tree comprises 249 elements.
-        let length_tree = Tree::new(249);
+        let length_tree = CanonicalTree::new(249);
 
         Self {
             window_size,
@@ -207,8 +207,8 @@ impl<'a> Lzxd<'a> {
 
                 BlockHead::Verbatim {
                     size,
-                    main_tree: self.main_tree.clone_instance(),
-                    length_tree: self.main_tree.clone_instance(),
+                    main_tree: self.main_tree.create_instance(),
+                    length_tree: self.main_tree.create_instance(),
                 }
             }
             BlockType::AlignedOffset => {
@@ -228,8 +228,8 @@ impl<'a> Lzxd<'a> {
                 BlockHead::AlignedOffset {
                     size,
                     aligned_offset_tree,
-                    main_tree: self.main_tree.clone_instance(),
-                    length_tree: self.main_tree.clone_instance(),
+                    main_tree: self.main_tree.create_instance(),
+                    length_tree: self.main_tree.create_instance(),
                 }
             }
             BlockType::Uncompressed => {

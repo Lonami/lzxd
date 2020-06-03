@@ -25,7 +25,7 @@ mod window_size;
 pub(crate) use bitstream::Bitstream;
 pub(crate) use block::{BlockHead, BlockType};
 pub use lzxd::Lzxd;
-pub(crate) use tree::Tree;
+pub(crate) use tree::{CanonicalTree, Tree};
 pub use window_size::WindowSize;
 
 /// Decompress an entire in-memory `buffer` of data compressed with LZXD into another new
