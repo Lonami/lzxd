@@ -209,7 +209,6 @@ impl<'a> Lzxd<'a> {
 
                             // This means there are some aligned bits.
                             if offset_bits >= 3 {
-                                assert!(offset_bits <= 8 + 3, "cannot use [0], read u16");
                                 verbatim_bits = (self.bitstream.read_bits(offset_bits - 3)) << 3;
                                 aligned_bits =
                                     aligned_offset_tree.decode_element(&mut self.bitstream);

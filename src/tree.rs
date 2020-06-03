@@ -65,7 +65,7 @@ impl Tree {
         }
 
         // If we didn't fill the entire table, the path lengths were wrong.
-        assert!(pos == self.huffman_tree.len());
+        assert_eq!(pos, self.huffman_tree.len());
     }
 
     pub fn decode_element(&self, bitstream: &mut Bitstream) -> u16 {
