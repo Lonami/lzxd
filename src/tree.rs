@@ -105,7 +105,7 @@ impl Tree {
         let mut i = range.start;
         while i < range.end {
             // > The "real" tree is then encoded using the pretree Huffman codes.
-            let code = pretree.decode_element(bitstream);
+            let code = pretree.decode_element(bitstream) as u8;
 
             // > Elements can be encoded in one of two ways: if several consecutive elements have
             // > the same path length, run-length encoding is employed; otherwise, the element is
@@ -113,21 +113,21 @@ impl Tree {
             // > previous path length of the tree, mod 17.
             match code {
                 0..=16 => {
-                    self.huffman_tree[i] = (17 + self.huffman_tree[i] - code) % 17;
+                    self.path_lengths[i] = (17 + self.path_lengths[i] - code) % 17;
                     i += 1;
                 }
                 // > Codes 17, 18, and 19 are used to represent consecutive elements that have the
                 // > same path length.
                 17 => {
                     let zeros = bitstream.read_bits(4);
-                    self.huffman_tree[i..i + zeros as usize + 4]
+                    self.path_lengths[i..i + zeros as usize + 4]
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 4;
                 }
                 18 => {
                     let zeros = bitstream.read_bits(5);
-                    self.huffman_tree[i..i + zeros as usize + 20]
+                    self.path_lengths[i..i + zeros as usize + 20]
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 20;
@@ -136,9 +136,9 @@ impl Tree {
                     let same = bitstream.read_bits(1);
                     // "Decode new code" is used to parse the next code from the bitstream, which
                     // has a value range of [0, 16].
-                    let code = pretree.decode_element(bitstream);
-                    let value = (17 + self.huffman_tree[i] - code) % 17;
-                    self.huffman_tree[i..i + same as usize + 4]
+                    let code = pretree.decode_element(bitstream) as u8;
+                    let value = (17 + self.path_lengths[i] - code) % 17;
+                    self.path_lengths[i..i + same as usize + 4]
                         .iter_mut()
                         .for_each(|x| *x = value);
                     i += same as usize + 4;
