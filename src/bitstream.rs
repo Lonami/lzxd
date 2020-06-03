@@ -2,6 +2,12 @@
 /// > least-significant- byte to most-significant-byte order, also known as byte-swapped,
 /// > or little-endian, words. Given an input stream of bits named a, b, c,..., x, y, z,
 /// > A, B, C, D, E, F, the output byte stream MUST be as [ 0| 1| 2| 3|...|30|31].
+///
+/// It is worth mentioning that older revisions of the document explain this better:
+///
+/// > Given an input stream of bits named a, b, c, ..., x, y, z, A, B, C, D, E, F, the output
+/// > byte stream (with byte boundaries highlighted) would be as follows:
+/// > [i|j|k|l|m|n|o#p|a|b|c|d|e|f|g|h#y|z|A|B|C|D|E|F#q|r|s|t|u|v|w|x]
 pub struct Bitstream<'a> {
     buffer: &'a [u8],
     // Next number in the bitstream.
@@ -81,10 +87,24 @@ impl<'a> Bitstream<'a> {
         self.read_bits(16).swap_bytes()
     }
 
+    pub fn read_u32_le(&mut self) -> u32 {
+        let lo = self.read_u16_le() as u32;
+        let hi = self.read_u16_le() as u32;
+        (hi << 16) | lo
+    }
+
     pub fn read_u24_be(&mut self) -> u32 {
         let hi = self.read_bits(16) as u32;
         let lo = self.read_bits(8) as u32;
         hi << 8 | lo
+    }
+
+    pub fn align(&mut self) {
+        self.remaining = 0;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty() && self.remaining == 0
     }
 }
 
@@ -137,6 +157,14 @@ mod tests {
     }
 
     #[test]
+    fn read_32le() {
+        let bytes = [0x56, 0x78, 0x12, 0x34];
+        let mut bitstream = Bitstream::new(&bytes);
+
+        assert_eq!(bitstream.read_u32_le(), 0x12345678);
+    }
+
+    #[test]
     fn read_24be() {
         let ns = [0b0000_1100_0001_1000_u16, 0b0001_1000_0011_0000_u16];
         let mut bytes = Vec::with_capacity(ns.len() * 2);
@@ -147,6 +175,31 @@ mod tests {
         assert_eq!(bitstream.read_bits(4), 0);
         assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
         assert_eq!(bitstream.read_bits(4), 0);
+    }
+
+    #[test]
+    fn align() {
+        let bytes = [0b0100_0000, 0b0010_0000, 0b1000_0000, 0b0110_0000];
+        let mut bitstream = Bitstream::new(&bytes);
+
+        assert_eq!(bitstream.read_bits(3), 1);
+        bitstream.align();
+        assert_eq!(bitstream.read_bits(3), 3);
+    }
+
+    #[test]
+    fn is_empty() {
+        let bytes = [];
+        let bitstream = Bitstream::new(&bytes);
+        assert!(bitstream.is_empty());
+
+        let bytes = [0xab, 0xcd];
+        let mut bitstream = Bitstream::new(&bytes);
+        assert!(!bitstream.is_empty());
+        bitstream.read_bits(15);
+        assert!(!bitstream.is_empty());
+        bitstream.read_bit();
+        assert!(bitstream.is_empty());
     }
 
     #[test]
