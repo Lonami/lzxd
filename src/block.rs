@@ -29,20 +29,20 @@ impl TryFrom<u8> for BlockType {
 #[derive(Debug)]
 pub enum BlockHead {
     Verbatim {
-        /// Only 24 bits are may be used.
+        /// Only 24 bits may be used.
         size: u32,
         main_tree: Tree,
         length_tree: Tree,
     },
     AlignedOffset {
-        /// Only 24 bits are may be used.
+        /// Only 24 bits may be used.
         size: u32,
         aligned_offset_tree: Tree,
         main_tree: Tree,
         length_tree: Tree,
     },
     Uncompressed {
-        /// Only 24 bits are may be used.
+        /// Only 24 bits may be used.
         size: u32,
         r: [u32; 3],
     },

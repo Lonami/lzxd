@@ -1,4 +1,5 @@
 use crate::Bitstream;
+use std::fmt;
 use std::num::NonZeroU8;
 use std::ops::Range;
 
@@ -13,7 +14,6 @@ pub struct CanonicalTree {
     path_lengths: Vec<u8>,
 }
 
-#[derive(Debug)]
 pub struct Tree {
     path_lengths: Vec<u8>,
     largest_length: NonZeroU8,
@@ -157,6 +157,15 @@ impl Tree {
         bitstream.read_bits(self.path_lengths[code as usize]);
 
         code
+    }
+}
+
+impl fmt::Debug for Tree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tree")
+            .field("path_lengths", &self.path_lengths.len())
+            .field("largest_length", &self.largest_length)
+            .finish()
     }
 }
 
