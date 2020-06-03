@@ -37,9 +37,9 @@ pub use window_size::WindowSize;
 pub fn decompress(buffer: &[u8], window_size: WindowSize) -> Vec<u8> {
     let mut result = Vec::new();
     let mut lzxd = Lzxd::new(window_size, buffer);
-    // TODO use a while loop once all chunks work
-    result.extend(lzxd.next_chunk().unwrap());
-    result.extend(lzxd.next_chunk().unwrap());
+    while let Some(chunk) = lzxd.next_chunk() {
+        result.extend(chunk);
+    }
     result
 }
 
@@ -52,8 +52,6 @@ mod tests {
         const DATA: &[u8] = include_bytes!("../a.lzxd");
 
         let mut lzxd = Lzxd::new(WindowSize::KB64, DATA);
-        while let Some(chunk) = lzxd.next_chunk() {
-            dbg!(chunk);
-        }
+        while let Some(_chunk) = lzxd.next_chunk() {}
     }
 }

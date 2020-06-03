@@ -145,8 +145,21 @@ impl<'a> Lzxd<'a> {
             return None;
         }
 
-        let chunk_size = self.bitstream.read_u16_le();
-        dbg!(chunk_size);
+        // TODO is this some oddity in .xnb files or lzxd? if the buffer has a 0xff,
+        //      the chunk size *is* present but otherwise we read something different.
+        let (chunk_size, unknown) = if self.bitstream.buffer_byte() == 0xff {
+            self.bitstream.skip_buffer_byte();
+            (self.bitstream.read_u16_le(), self.bitstream.read_u16_le())
+        } else {
+            // TODO why is `chunk_size` (second tuple element) not the value we expect?
+            (32 * 1024, self.bitstream.read_u16_le())
+        };
+
+        if unknown == 0 {
+            // After this there seems to be another extra zero-byte (as if the "flag" was 0
+            // and then the length too).
+            return None;
+        }
 
         // TODO instead of panicking, we should probably return proper errors (here and everywhere)
         assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
@@ -169,8 +182,7 @@ impl<'a> Lzxd<'a> {
             }
         }
 
-        // TODO why is `chunk_size` not the value we expect?
-        Some(32 * 1024)
+        Some(chunk_size)
     }
 
     /// Read the pretrees for the main and length tree, and with those also read the trees
@@ -293,8 +305,6 @@ impl<'a> Lzxd<'a> {
             }
             BlockHead::Uncompressed { size: _size, r: _r } => todo!(),
         }
-
-        eprintln!("next: {}", self.bitstream.peek_bits(16));
 
         // This is the code path for aligned and verbatim blocks.
         while self.block_remaining != 0 {

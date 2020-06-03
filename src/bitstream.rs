@@ -106,6 +106,17 @@ impl<'a> Bitstream<'a> {
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty() && self.remaining == 0
     }
+
+    /// Bypass the 16-bit integer check and only check the next byte in the buffer
+    /// (note that this won't work if it the buffer has advanced a bit beforehand).
+    pub fn buffer_byte(&self) -> u8 {
+        self.buffer[0]
+    }
+
+    /// Bypass the 16-bit integer check and skip the next byte in the buffer.
+    pub fn skip_buffer_byte(&mut self) {
+        self.buffer = &self.buffer[1..];
+    }
 }
 
 #[cfg(test)]
