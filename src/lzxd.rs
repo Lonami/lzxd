@@ -72,6 +72,7 @@ pub struct Lzxd<'a> {
 }
 
 impl<'a> Lzxd<'a> {
+    /// NOTE: If the `WindowSize` is wrong, things won't work as expected.
     pub fn new(window_size: WindowSize, buffer: &'a [u8]) -> Self {
         let mut bitstream = Bitstream::new(buffer);
 

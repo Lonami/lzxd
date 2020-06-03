@@ -36,7 +36,7 @@ mod tests {
     fn run() {
         const DATA: &[u8] = include_bytes!("../a.lzxd");
 
-        let mut lzxd = Lzxd::new(WindowSize::KB32, DATA);
+        let mut lzxd = Lzxd::new(WindowSize::KB64, DATA);
         while let Some(block) = lzxd.next_block() {
             dbg!(block);
         }
