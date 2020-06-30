@@ -139,6 +139,11 @@ impl<'a> Lzxd<'a> {
         }
     }
 
+    /// Skips a chunk without actually reading anything from it.
+    pub fn skip_chunk(&mut self) {
+        todo!()
+    }
+
     /// Reads the header for the next chunk and returns the chunk size.
     pub fn read_chunk_header(&mut self) -> Option<u16> {
         if self.bitstream.is_empty() {
