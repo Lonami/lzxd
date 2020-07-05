@@ -145,30 +145,11 @@ impl<'a> Lzxd<'a> {
     }
 
     /// Reads the header for the next chunk and returns the chunk size.
-    pub fn read_chunk_header(&mut self) -> Option<u16> {
-        if self.bitstream.is_empty() {
-            return None;
-        }
-
-        // TODO is this some oddity in .xnb files or lzxd? if the buffer has a 0xff,
-        //      the chunk size *is* present but otherwise we read something different.
-        let (chunk_size, unknown) = if self.bitstream.buffer_byte() == 0xff {
-            self.bitstream.skip_buffer_byte();
-            (self.bitstream.read_u16_le(), self.bitstream.read_u16_le())
-        } else {
-            // TODO why is `chunk_size` (second tuple element) not the value we expect?
-            (32 * 1024, self.bitstream.read_u16_le())
-        };
-
-        if unknown == 0 {
-            // After this there seems to be another extra zero-byte (as if the "flag" was 0
-            // and then the length too).
-            return None;
-        }
-
-        // TODO instead of panicking, we should probably return proper errors (here and everywhere)
-        assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
-
+    pub fn read_chunk_header(&mut self) {
+        // > The first bit in the first chunk in the LZXD bitstream (following the 2-byte,
+        // > chunk-size prefix described in section 2.2.1) indicates the presence or absence of
+        // > two 16-bit fields immediately following the single bit. If the bit is set, E8
+        // > translation is enabled.
         if !self.first_chunk_read {
             self.first_chunk_read = true;
 
@@ -186,8 +167,6 @@ impl<'a> Lzxd<'a> {
                 todo!("e8 translation not implemented");
             }
         }
-
-        Some(chunk_size)
     }
 
     /// Read the pretrees for the main and length tree, and with those also read the trees
@@ -271,12 +250,23 @@ impl<'a> Lzxd<'a> {
         };
     }
 
-    pub fn next_chunk(&mut self) -> Option<&[u8]> {
-        let chunk_size = if let Some(size) = self.read_chunk_header() {
-            size
-        } else {
-            return None;
-        };
+    pub fn next_chunk(&mut self, chunk_size: usize) -> Option<&[u8]> {
+        // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
+        // > stream, which can represent less than 32 KB.
+        //
+        // > The LZXD engine encodes a compressed, chunk-size prefix field preceding each
+        // > compressed chunk in the compressed byte stream. The compressed, chunk-size prefix
+        // > field is a byte aligned, little-endian, 16-bit field.
+        //
+        // However, this doesn't seem to be part of LZXD itself? At least when testing with
+        // `.xnb` files, every chunk comes with a compressed chunk size unless it has the flag
+        // set to 0xff where it also includes the uncompressed chunk size.
+        //
+        // TODO maybe the docs could clarify whether this length is compressed or not
+        // TODO instead of panicking, we should probably return proper errors (here and everywhere)
+        assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
+
+        self.read_chunk_header();
 
         if self.block_remaining == 0 {
             self.read_block_head();

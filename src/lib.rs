@@ -35,12 +35,7 @@ pub use window_size::WindowSize;
 ///
 /// If you need more control over the output buffer, build a new `Lzxd` manually.
 pub fn decompress(buffer: &[u8], window_size: WindowSize) -> Vec<u8> {
-    let mut result = Vec::new();
-    let mut lzxd = Lzxd::new(window_size, buffer);
-    while let Some(chunk) = lzxd.next_chunk() {
-        result.extend(chunk);
-    }
-    result
+    todo!()
 }
 
 #[cfg(test)]
