@@ -65,7 +65,7 @@ const BASE_POSITION: [u32; 290] = [
 /// > which can represent less than 32 KB.
 const MAX_CHUNK_SIZE: usize = 32 * 1024;
 
-pub struct Lzxd<'a> {
+pub struct Lzxd {
     /// The window size we're working with.
     window_size: WindowSize,
 
@@ -75,9 +75,6 @@ pub struct Lzxd<'a> {
 
     /// Current position into the sliding window.
     pos: usize,
-
-    /// Bitstream over the in-memory byte buffer of compressed data.
-    bitstream: Bitstream<'a>,
 
     /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
     /// to its path lengths.
@@ -104,9 +101,9 @@ pub struct Lzxd<'a> {
     block_remaining: u32,
 }
 
-impl<'a> Lzxd<'a> {
+impl Lzxd {
     /// NOTE: If the `WindowSize` is wrong, things won't work as expected.
-    pub fn new(window_size: WindowSize, buffer: &'a [u8]) -> Self {
+    pub fn new(window_size: WindowSize) -> Self {
         // > The main tree comprises 256 elements that correspond to all possible 8-bit
         // > characters, plus 8 * NUM_POSITION_SLOTS elements that correspond to matches.
         let main_tree = CanonicalTree::new(256 + 8 * window_size.position_slots());
@@ -118,7 +115,6 @@ impl<'a> Lzxd<'a> {
             window_size,
             window: window_size.create_buffer(),
             pos: 0,
-            bitstream: Bitstream::new(buffer),
             // > Because trees are output several times during compression of large amounts of
             // > data (multiple blocks), LZXD optimizes compression by encoding only the delta
             // > path lengths lengths between the current and previous trees.
@@ -145,7 +141,7 @@ impl<'a> Lzxd<'a> {
     }
 
     /// Reads the header for the next chunk and returns the chunk size.
-    pub fn read_chunk_header(&mut self) {
+    pub fn read_chunk_header(&mut self, bitstream: &mut Bitstream) {
         // > The first bit in the first chunk in the LZXD bitstream (following the 2-byte,
         // > chunk-size prefix described in section 2.2.1) indicates the presence or absence of
         // > two 16-bit fields immediately following the single bit. If the bit is set, E8
@@ -153,10 +149,10 @@ impl<'a> Lzxd<'a> {
         if !self.first_chunk_read {
             self.first_chunk_read = true;
 
-            let e8_translation = self.bitstream.read_bit() != 0;
+            let e8_translation = bitstream.read_bit() != 0;
             self._e8_translation_size = if e8_translation {
-                let high = self.bitstream.read_u16_le() as u32;
-                let low = self.bitstream.read_u16_le() as u32;
+                let high = bitstream.read_u16_le() as u32;
+                let low = bitstream.read_u16_le() as u32;
                 Some((high << 16) | low)
             } else {
                 None
@@ -173,7 +169,7 @@ impl<'a> Lzxd<'a> {
     /// themselves, using the path lengths from a previous tree if any.
     ///
     /// This is used when reading a verbatim or aligned block.
-    fn read_main_and_length_trees(&mut self) {
+    fn read_main_and_length_trees(&mut self, bitstream: &mut Bitstream) {
         // Verbatim block
         // Entry                                             Comments
         // Pretree for first 256 elements of main tree       20 elements, 4 bits each
@@ -184,30 +180,30 @@ impl<'a> Lzxd<'a> {
         // Path lengths of elements in length tree           Encoded using pretree
         // Token sequence (matches and literals)             Specified in section 2.6
         self.main_tree
-            .update_range_with_pretree(&mut self.bitstream, 0..256);
+            .update_range_with_pretree(bitstream, 0..256);
 
         self.main_tree.update_range_with_pretree(
-            &mut self.bitstream,
+            bitstream,
             256..256 + 8 * self.window_size.position_slots(),
         );
         self.length_tree
-            .update_range_with_pretree(&mut self.bitstream, 0..249);
+            .update_range_with_pretree(bitstream, 0..249);
     }
 
     /// Read the head of the next block and store it in the `self.current_block`.
-    fn read_block_head(&mut self) {
+    fn read_block_head(&mut self, bitstream: &mut Bitstream) {
         // Block header
-        let ty = match BlockType::try_from(self.bitstream.read_bits(3) as u8) {
+        let ty = match BlockType::try_from(bitstream.read_bits(3) as u8) {
             Ok(ty) => ty,
             Err(_) => todo!("notify error of bad block type"),
         };
-        let size = self.bitstream.read_u24_be();
+        let size = bitstream.read_u24_be();
 
         // Block body (head)
         self.block_remaining = size;
         self.current_block = match ty {
             BlockType::Verbatim => {
-                self.read_main_and_length_trees();
+                self.read_main_and_length_trees(bitstream);
 
                 BlockHead::Verbatim {
                     size,
@@ -222,12 +218,12 @@ impl<'a> Lzxd<'a> {
                     let mut path_lengths = vec![0u8; 8];
                     path_lengths
                         .iter_mut()
-                        .for_each(|x| *x = self.bitstream.read_bits(3) as u8);
+                        .for_each(|x| *x = bitstream.read_bits(3) as u8);
 
                     Tree::from_path_lengths(path_lengths)
                 };
 
-                self.read_main_and_length_trees();
+                self.read_main_and_length_trees(bitstream);
 
                 BlockHead::AlignedOffset {
                     size,
@@ -238,9 +234,9 @@ impl<'a> Lzxd<'a> {
             }
             BlockType::Uncompressed => {
                 self.r = [
-                    self.bitstream.read_u32_le(),
-                    self.bitstream.read_u32_le(),
-                    self.bitstream.read_u32_le(),
+                    bitstream.read_u32_le(),
+                    bitstream.read_u32_le(),
+                    bitstream.read_u32_le(),
                 ];
                 BlockHead::Uncompressed {
                     size,
@@ -250,7 +246,7 @@ impl<'a> Lzxd<'a> {
         };
     }
 
-    pub fn next_chunk(&mut self, chunk_size: usize) -> Option<&[u8]> {
+    pub fn next_chunk(&mut self, chunk: &[u8], chunk_size: usize) -> Option<&[u8]> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
         // > stream, which can represent less than 32 KB.
         //
@@ -264,12 +260,15 @@ impl<'a> Lzxd<'a> {
         //
         // TODO maybe the docs could clarify whether this length is compressed or not
         // TODO instead of panicking, we should probably return proper errors (here and everywhere)
+        assert!(chunk.len() % 2 == 0, "compressed chunks must be aligned to 16 bits");
         assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
 
-        self.read_chunk_header();
+        let mut bitstream = Bitstream::new(chunk);
+
+        self.read_chunk_header(&mut bitstream);
 
         if self.block_remaining == 0 {
-            self.read_block_head();
+            self.read_block_head(&mut bitstream);
         }
 
         // Both verbatim and aligned offset block need to decode matches and literals, so their
@@ -308,7 +307,7 @@ impl<'a> Lzxd<'a> {
             let end = curpos + limit;
             while curpos < end {
                 // Decoding Matches and Literals (Aligned and Verbatim Blocks)
-                let main_element = main_tree.decode_element(&mut self.bitstream);
+                let main_element = main_tree.decode_element(&mut bitstream);
 
                 // Check if it is a literal character.
                 if main_element < 256 {
@@ -321,7 +320,7 @@ impl<'a> Lzxd<'a> {
 
                     let match_length = if length_header == 7 {
                         // Length of the footer.
-                        length_tree.decode_element(&mut self.bitstream) + 7 + 2
+                        length_tree.decode_element(&mut bitstream) + 7 + 2
                     } else {
                         length_header + 2 // no length footer
                                           // Decoding a match length (if a match length < 257).
@@ -351,12 +350,12 @@ impl<'a> Lzxd<'a> {
 
                             // This means there are some aligned bits.
                             if offset_bits >= 3 {
-                                verbatim_bits = (self.bitstream.read_bits(offset_bits - 3)) << 3;
+                                verbatim_bits = (bitstream.read_bits(offset_bits - 3)) << 3;
                                 aligned_bits =
-                                    aligned_offset_tree.decode_element(&mut self.bitstream);
+                                    aligned_offset_tree.decode_element(&mut bitstream);
                             } else {
                                 // 0, 1, or 2 verbatim bits
-                                verbatim_bits = self.bitstream.read_bits(offset_bits);
+                                verbatim_bits = bitstream.read_bits(offset_bits);
                                 aligned_bits = 0;
                             }
 
@@ -365,7 +364,7 @@ impl<'a> Lzxd<'a> {
                                 + aligned_bits as u32
                         } else {
                             // Block_type is a verbatim_block.
-                            let verbatim_bits = self.bitstream.read_bits(offset_bits);
+                            let verbatim_bits = bitstream.read_bits(offset_bits);
                             BASE_POSITION[position_slot as usize] + verbatim_bits as u32
                         };
 
@@ -389,22 +388,22 @@ impl<'a> Lzxd<'a> {
                     /*
                     let match_length = if match_length == 257 {
                         // Decode the extra length.
-                        let extra_len = if self.bitstream.read_bit() != 0 {
-                            if self.bitstream.read_bit() != 0 {
-                                if self.bitstream.read_bit() != 0 {
+                        let extra_len = if bitstream.read_bit() != 0 {
+                            if bitstream.read_bit() != 0 {
+                                if bitstream.read_bit() != 0 {
                                     // > Prefix 0b111; Number of bits to decode 15;
-                                    self.bitstream.read_bits(15)
+                                    bitstream.read_bits(15)
                                 } else {
                                     // > Prefix 0b110; Number of bits to decode 12;
-                                    self.bitstream.read_bits(12) + 1024 + 256
+                                    bitstream.read_bits(12) + 1024 + 256
                                 }
                             } else {
                                 // > Prefix 0b10; Number of bits to decode 10;
-                                self.bitstream.read_bits(10) + 256
+                                bitstream.read_bits(10) + 256
                             }
                         } else {
                             // > Prefix 0b0; Number of bits to decode 8;
-                            self.bitstream.read_bits(8)
+                            bitstream.read_bits(8)
                         };
 
                         // Get the match length (if match length >= 257).
@@ -444,7 +443,9 @@ impl<'a> Lzxd<'a> {
             // > chunk of a byte-aligned size. The compressed chunk could be smaller than 32 KB
             // > or larger than 32 KB if the data is incompressible when the chunk is not the
             // > last one.
-            self.bitstream.align();
+            //
+            // That's the input chunk parsed which aligned to a byte-boundary already. There is
+            // no need to align the bitstream because on the next call it will be aligned.
 
             let start = self.pos;
             self.pos = curpos % self.window.len();
