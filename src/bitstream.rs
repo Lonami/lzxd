@@ -76,7 +76,14 @@ impl<'a> Bitstream<'a> {
             let hi = self.n.rotate_left(self.remaining as u32) & ((1 << self.remaining) - 1);
             let bits = bits - self.remaining;
 
-            let n = u16::from_le_bytes([self.buffer[0], self.buffer[1]]);
+            // We may peek more than we need (i.e. at the end of a chunk), due to the way
+            // our decoder is implemented. This is a bit ugly but luckily we can pretend
+            // there are just zeros after.
+            let n = if self.buffer.is_empty() {
+                0
+            } else {
+                u16::from_le_bytes([self.buffer[0], self.buffer[1]])
+            };
             let lo = n.rotate_left(bits as u32) & ((1u32 << bits) as u16).wrapping_sub(1);
 
             ((hi as u32) << bits) as u16 | lo
