@@ -219,13 +219,10 @@ impl Lzxd {
         // Pretree for length tree                           20 elements, 4 bits each
         // Path lengths of elements in length tree           Encoded using pretree
         // Token sequence (matches and literals)             Specified in section 2.6
-        self.main_tree
-            .update_range_with_pretree(bitstream, 0..256);
+        self.main_tree.update_range_with_pretree(bitstream, 0..256);
 
-        self.main_tree.update_range_with_pretree(
-            bitstream,
-            256..256 + 8 * self.window_size.position_slots(),
-        );
+        self.main_tree
+            .update_range_with_pretree(bitstream, 256..256 + 8 * self.window_size.position_slots());
         self.length_tree
             .update_range_with_pretree(bitstream, 0..249);
     }
@@ -287,8 +284,7 @@ impl Lzxd {
     }
 
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
-    // TODO not a fan of `chunk_size` input parameter, it's probably not needed.
-    pub fn decompress_next(&mut self, chunk: &[u8], chunk_size: usize) -> Option<&[u8]> {
+    pub fn decompress_next(&mut self, chunk: &[u8]) -> Option<&[u8]> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
         // > stream, which can represent less than 32 KB.
         //
@@ -302,8 +298,10 @@ impl Lzxd {
         //
         // TODO maybe the docs could clarify whether this length is compressed or not
         // TODO instead of panicking, we should probably return proper errors (here and everywhere)
-        assert!(chunk.len() % 2 == 0, "compressed chunks must be aligned to 16 bits");
-        assert!(chunk_size as usize <= MAX_CHUNK_SIZE);
+        assert!(
+            chunk.len() % 2 == 0,
+            "compressed chunks must be aligned to 16 bits"
+        );
 
         let mut bitstream = Bitstream::new(chunk);
 
@@ -345,9 +343,8 @@ impl Lzxd {
         // This is the code path for aligned and verbatim blocks.
         while self.block_remaining != 0 {
             let mut curpos = self.pos;
-            let limit = usize::min(chunk_size as usize, self.block_remaining as usize);
-            let end = curpos + limit;
-            while curpos < end {
+            // TODO we're handling blocks_remaining wrong
+            while !bitstream.is_empty() {
                 // Decoding Matches and Literals (Aligned and Verbatim Blocks)
                 let main_element = main_tree.decode_element(&mut bitstream);
 
@@ -393,8 +390,7 @@ impl Lzxd {
                             // This means there are some aligned bits.
                             if offset_bits >= 3 {
                                 verbatim_bits = (bitstream.read_bits(offset_bits - 3)) << 3;
-                                aligned_bits =
-                                    aligned_offset_tree.decode_element(&mut bitstream);
+                                aligned_bits = aligned_offset_tree.decode_element(&mut bitstream);
                             } else {
                                 // 0, 1, or 2 verbatim bits
                                 verbatim_bits = bitstream.read_bits(offset_bits);
@@ -475,6 +471,8 @@ impl Lzxd {
                     curpos += match_length;
                 }
             }
+            let end = curpos;
+            let limit = end - self.pos;
             self.block_remaining -= limit as u32;
 
             // > To ensure that an exact number of input bytes represent an exact number of

@@ -105,6 +105,16 @@ impl<'a> Bitstream<'a> {
         let lo = self.read_bits(8) as u32;
         hi << 8 | lo
     }
+
+    pub fn is_empty(&self) -> bool {
+        // > the output bitstream is padded with up to 15 bits of zeros to realign the bitstream
+        // > on a 16-bit boundary (even byte boundary) for the next 32 KB of data.
+        //
+        // TODO but how likely it is to have valid 0 data in the last 15 bits? we would
+        // misinterpret this unless we know the decompressed chunk length to know when to
+        // stop reading
+        self.buffer.is_empty() && self.peek_bits(self.remaining) == 0
+    }
 }
 
 #[cfg(test)]
@@ -174,6 +184,21 @@ mod tests {
         assert_eq!(bitstream.read_bits(4), 0);
         assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
         assert_eq!(bitstream.read_bits(4), 0);
+    }
+
+    #[test]
+    fn is_empty() {
+        let bytes = [];
+        let bitstream = Bitstream::new(&bytes);
+        assert!(bitstream.is_empty());
+
+        let bytes = [0xab, 0xcd];
+        let mut bitstream = Bitstream::new(&bytes);
+        assert!(!bitstream.is_empty());
+        bitstream.read_bits(15);
+        assert!(!bitstream.is_empty());
+        bitstream.read_bit();
+        assert!(bitstream.is_empty());
     }
 
     #[test]
