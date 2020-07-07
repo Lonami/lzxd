@@ -249,8 +249,9 @@ impl Lzxd {
                 }
             }
             BlockType::AlignedOffset => {
-                // > An aligned offset block is identical to the verbatim block except for the
-                // > presence of the aligned offset tree preceding the other trees.
+                // > encoding only the delta path lengths between the current and previous trees
+                //
+                // This means we don't need to worry about deltas on this tree.
                 let aligned_offset_tree = {
                     let mut path_lengths = vec![0u8; 8];
                     path_lengths
@@ -260,6 +261,8 @@ impl Lzxd {
                     Tree::from_path_lengths(path_lengths)
                 };
 
+                // > An aligned offset block is identical to the verbatim block except for the
+                // > presence of the aligned offset tree preceding the other trees.
                 self.read_main_and_length_trees(bitstream);
 
                 BlockHead::AlignedOffset {
