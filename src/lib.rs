@@ -342,7 +342,7 @@ impl Lzxd {
 
         // This is the code path for aligned and verbatim blocks.
         while self.block_remaining != 0 {
-            let mut curpos = self.pos;
+            let start = self.pos;
             // TODO we're handling blocks_remaining wrong
             while !bitstream.is_empty() {
                 // Decoding Matches and Literals (Aligned and Verbatim Blocks)
@@ -351,8 +351,8 @@ impl Lzxd {
                 // Check if it is a literal character.
                 if main_element < 256 {
                     // It is a literal, so copy the literal to output.
-                    self.window[curpos] = main_element as u8;
-                    curpos += 1;
+                    self.window[self.pos] = main_element as u8;
+                    self.pos += 1;
                 } else {
                     // Decode the match. For a match, there are two components, offset and length.
                     let length_header = (main_element - 256) & 7;
@@ -459,21 +459,20 @@ impl Lzxd {
                     // Get match length and offset. Perform copy and paste work.
                     // TODO this can be improved by avoiding %
                     for i in 0..match_length {
-                        let li = (curpos + i) % self.window.len();
+                        let li = (self.pos + i) % self.window.len();
                         let ri =
-                            (self.window.len() + curpos + i - match_offset) % self.window.len();
+                            (self.window.len() + self.pos + i - match_offset) % self.window.len();
                         self.window[li] = self.window[ri];
                     }
 
                     // TODO something is still wrong around here, i don't know what it is
                     //      guess add more debug logs and try to find at which point it breaks
 
-                    curpos += match_length;
+                    self.pos += match_length;
                 }
             }
-            let end = curpos;
-            let limit = end - self.pos;
-            self.block_remaining -= limit as u32;
+            let end = self.pos;
+            self.block_remaining -= (end - start) as u32;
 
             // > To ensure that an exact number of input bytes represent an exact number of
             // > output bytes for each chunk, after each 32 KB of uncompressed data is
@@ -487,8 +486,7 @@ impl Lzxd {
             // That's the input chunk parsed which aligned to a byte-boundary already. There is
             // no need to align the bitstream because on the next call it will be aligned.
 
-            let start = self.pos;
-            self.pos = curpos % self.window.len();
+            self.pos = self.pos % self.window.len();
 
             // TODO last chunk may misalign this and on the next iteration we wouldn't be able
             // to return a continous slice. if we're called on non-aligned, we could shift things
