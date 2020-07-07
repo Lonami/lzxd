@@ -105,25 +105,6 @@ impl<'a> Bitstream<'a> {
         let lo = self.read_bits(8) as u32;
         hi << 8 | lo
     }
-
-    pub fn align(&mut self) {
-        self.remaining = 0;
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty() && self.remaining == 0
-    }
-
-    /// Bypass the 16-bit integer check and only check the next byte in the buffer
-    /// (note that this won't work if it the buffer has advanced a bit beforehand).
-    pub fn buffer_byte(&self) -> u8 {
-        self.buffer[0]
-    }
-
-    /// Bypass the 16-bit integer check and skip the next byte in the buffer.
-    pub fn skip_buffer_byte(&mut self) {
-        self.buffer = &self.buffer[1..];
-    }
 }
 
 #[cfg(test)]
@@ -193,31 +174,6 @@ mod tests {
         assert_eq!(bitstream.read_bits(4), 0);
         assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
         assert_eq!(bitstream.read_bits(4), 0);
-    }
-
-    #[test]
-    fn align() {
-        let bytes = [0b0100_0000, 0b0010_0000, 0b1000_0000, 0b0110_0000];
-        let mut bitstream = Bitstream::new(&bytes);
-
-        assert_eq!(bitstream.read_bits(3), 1);
-        bitstream.align();
-        assert_eq!(bitstream.read_bits(3), 3);
-    }
-
-    #[test]
-    fn is_empty() {
-        let bytes = [];
-        let bitstream = Bitstream::new(&bytes);
-        assert!(bitstream.is_empty());
-
-        let bytes = [0xab, 0xcd];
-        let mut bitstream = Bitstream::new(&bytes);
-        assert!(!bitstream.is_empty());
-        bitstream.read_bits(15);
-        assert!(!bitstream.is_empty());
-        bitstream.read_bit();
-        assert!(bitstream.is_empty());
     }
 
     #[test]

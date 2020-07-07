@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn decode_simple_table() {
         // Based on some aligned offset tree
-        let mut tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
+        let tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
         let value_count = vec![(2, 32), (6, 16), (3, 8), (4, 4), (1, 2), (0, 1), (5, 1)];
 
         let mut i = 0;
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn decode_complex_table() {
         // Based on the pretree of some length tree
-        let mut tree = Tree::from_path_lengths(vec![
+        let tree = Tree::from_path_lengths(vec![
             1, 0, 0, 0, 0, 7, 3, 3, 4, 4, 5, 5, 5, 7, 8, 8, 0, 7, 0, 0,
         ]);
         let value_count = vec![
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn decode_elements() {
-        let mut tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
+        let tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
 
         let buffer = [0x5b, 0xda, 0x3f, 0xf8];
         let mut bitstream = Bitstream::new(&buffer);
