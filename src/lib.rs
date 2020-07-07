@@ -180,8 +180,8 @@ impl Lzxd {
         }
     }
 
-    /// Reads the header for the next chunk and returns the chunk size.
-    fn read_chunk_header(&mut self, bitstream: &mut Bitstream) {
+    /// Try reading the header for the first chunk.
+    fn try_read_first_chunk(&mut self, bitstream: &mut Bitstream) {
         // > The first bit in the first chunk in the LZXD bitstream (following the 2-byte,
         // > chunk-size prefix described in section 2.2.1) indicates the presence or absence of
         // > two 16-bit fields immediately following the single bit. If the bit is set, E8
@@ -308,7 +308,7 @@ impl Lzxd {
 
         let mut bitstream = Bitstream::new(chunk);
 
-        self.read_chunk_header(&mut bitstream);
+        self.try_read_first_chunk(&mut bitstream);
 
         if self.block_remaining == 0 {
             self.read_block_head(&mut bitstream);
