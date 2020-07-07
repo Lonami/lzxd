@@ -3,7 +3,7 @@ use std::fmt;
 use std::num::NonZeroU8;
 use std::ops::Range;
 
-/// The canonical tree cannot be used to decode elements. Instead, it behaves like a cast for
+/// The canonical tree cannot be used to decode elements. Instead, it behaves like a builder for
 /// instances of the actual tree that can decode elements efficiently.
 #[derive(Debug)]
 pub struct CanonicalTree {

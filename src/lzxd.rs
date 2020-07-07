@@ -61,10 +61,27 @@ const BASE_POSITION: [u32; 290] = [
     33292288, 33423360,
 ];
 
-/// > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the stream,
-/// > which can represent less than 32 KB.
-const MAX_CHUNK_SIZE: usize = 32 * 1024;
+/// A chunk represents exactly 32 KB of uncompressed data until the last chunk in the stream,
+/// which can represent less than 32 KB.
+pub const MAX_CHUNK_SIZE: usize = 32 * 1024;
 
+/// The main interface to perform LZXD decompression.
+///
+/// This structure stores the required state to process the compressed chunks of data in a
+/// sequential order.
+///
+/// ```no_run
+/// # fn get_compressed_chunk() -> Option<Vec<u8>> { unimplemented!() }
+/// # fn write_data(a: &[u8]) { unimplemented!() }
+/// use ::lzxd::{Lzxd, WindowSize, MAX_CHUNK_SIZE};
+///
+/// let mut lzxd = Lzxd::new(WindowSize::KB64);
+///
+/// while let Some(chunk) = get_compressed_chunk() {
+///     let decompressed = lzxd.next_chunk(&chunk, MAX_CHUNK_SIZE);
+///     write_data(decompressed);
+/// }
+/// ```
 pub struct Lzxd {
     /// The window size we're working with.
     window_size: WindowSize,
@@ -102,7 +119,11 @@ pub struct Lzxd {
 }
 
 impl Lzxd {
-    /// NOTE: If the `WindowSize` is wrong, things won't work as expected.
+    /// Creates a new instance of the LZXD decoder state. The [`WindowSize`] must be obtained
+    /// from elsewhere (e.g. it may be predetermined to a certain value), and if it's wrong,
+    /// the decompressed values won't be those expected.
+    ///
+    /// [`WindowSize`]: enum.WindowSize.html
     pub fn new(window_size: WindowSize) -> Self {
         // > The main tree comprises 256 elements that correspond to all possible 8-bit
         // > characters, plus 8 * NUM_POSITION_SLOTS elements that correspond to matches.
@@ -135,13 +156,8 @@ impl Lzxd {
         }
     }
 
-    /// Skips a chunk without actually reading anything from it.
-    pub fn skip_chunk(&mut self) {
-        todo!()
-    }
-
     /// Reads the header for the next chunk and returns the chunk size.
-    pub fn read_chunk_header(&mut self, bitstream: &mut Bitstream) {
+    fn read_chunk_header(&mut self, bitstream: &mut Bitstream) {
         // > The first bit in the first chunk in the LZXD bitstream (following the 2-byte,
         // > chunk-size prefix described in section 2.2.1) indicates the presence or absence of
         // > two 16-bit fields immediately following the single bit. If the bit is set, E8
@@ -246,7 +262,9 @@ impl Lzxd {
         };
     }
 
-    pub fn next_chunk(&mut self, chunk: &[u8], chunk_size: usize) -> Option<&[u8]> {
+    /// Decompresses the next compressed `chunk` from the LZXD data stream.
+    // TODO not a fan of `chunk_size` input parameter, it's probably not needed.
+    pub fn decompress_next(&mut self, chunk: &[u8], chunk_size: usize) -> Option<&[u8]> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
         // > stream, which can represent less than 32 KB.
         //
@@ -449,6 +467,10 @@ impl Lzxd {
 
             let start = self.pos;
             self.pos = curpos % self.window.len();
+
+            // TODO last chunk may misalign this and on the next iteration we wouldn't be able
+            // to return a continous slice. if we're called on non-aligned, we could shift things
+            // and align it.
             return Some(&self.window[start..end]);
         }
 
