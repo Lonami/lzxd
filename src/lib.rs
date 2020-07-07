@@ -97,12 +97,12 @@ pub const MAX_CHUNK_SIZE: usize = 32 * 1024;
 /// ```no_run
 /// # fn get_compressed_chunk() -> Option<Vec<u8>> { unimplemented!() }
 /// # fn write_data(a: &[u8]) { unimplemented!() }
-/// use ::lzxd::{Lzxd, WindowSize, MAX_CHUNK_SIZE};
+/// use ::lzxd::{Lzxd, WindowSize};
 ///
 /// let mut lzxd = Lzxd::new(WindowSize::KB64);
 ///
 /// while let Some(chunk) = get_compressed_chunk() {
-///     let decompressed = lzxd.decompress_next(&chunk, MAX_CHUNK_SIZE);
+///     let decompressed = lzxd.decompress_next(&chunk);
 ///     write_data(decompressed.unwrap());
 /// }
 /// ```
