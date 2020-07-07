@@ -1,4 +1,4 @@
-use crate::{Bitstream, Tree};
+use crate::{Bitstream, DecoderState, Tree};
 
 // if position_slot < 4 {
 //     0
@@ -93,6 +93,31 @@ pub struct Block {
     /// Only 24 bits may be used.
     pub size: u32,
     pub kind: Kind,
+}
+
+/// Read the pretrees for the main and length tree, and with those also read the trees
+/// themselves, using the path lengths from a previous tree if any.
+///
+/// This is used when reading a verbatim or aligned block.
+fn read_main_and_length_trees(bitstream: &mut Bitstream, state: &mut DecoderState) {
+    // Verbatim block
+    // Entry                                             Comments
+    // Pretree for first 256 elements of main tree       20 elements, 4 bits each
+    // Path lengths of first 256 elements of main tree   Encoded using pretree
+    // Pretree for remainder of main tree                20 elements, 4 bits each
+    // Path lengths of remaining elements of main tree   Encoded using pretree
+    // Pretree for length tree                           20 elements, 4 bits each
+    // Path lengths of elements in length tree           Encoded using pretree
+    // Token sequence (matches and literals)             Specified in section 2.6
+    state.main_tree.update_range_with_pretree(bitstream, 0..256);
+
+    state
+        .main_tree
+        .update_range_with_pretree(bitstream, 256..256 + 8 * state.window_size.position_slots());
+
+    state
+        .length_tree
+        .update_range_with_pretree(bitstream, 0..249);
 }
 
 fn decode_element(
@@ -216,44 +241,95 @@ fn decode_element(
 }
 
 impl Block {
-    pub fn decode_element(
-        &self,
-        bitstream: &mut Bitstream,
-        mut r: [u32; 3],
-    ) -> (Decoded, [u32; 3]) {
+    pub(crate) fn read(bitstream: &mut Bitstream, state: &mut DecoderState) -> Self {
+        // > Each block of compressed data begins with a 3-bit Block Type field.
+        // > Of the eight possible values, only three are valid values for the Block Type
+        // > field.
+        let kind = bitstream.read_bits(3);
+        let size = bitstream.read_u24_be();
+
+        let kind = match kind {
+            0b001 => {
+                read_main_and_length_trees(bitstream, state);
+
+                Kind::Verbatim {
+                    main_tree: state.main_tree.create_instance(),
+                    length_tree: state.length_tree.create_instance(),
+                }
+            }
+            0b010 => {
+                // > encoding only the delta path lengths between the current and previous trees
+                //
+                // This means we don't need to worry about deltas on this tree.
+                let aligned_offset_tree = {
+                    let mut path_lengths = vec![0u8; 8];
+                    path_lengths
+                        .iter_mut()
+                        .for_each(|x| *x = bitstream.read_bits(3) as u8);
+
+                    Tree::from_path_lengths(path_lengths)
+                };
+
+                // > An aligned offset block is identical to the verbatim block except for the
+                // > presence of the aligned offset tree preceding the other trees.
+                read_main_and_length_trees(bitstream, state);
+
+                Kind::AlignedOffset {
+                    aligned_offset_tree,
+                    main_tree: state.main_tree.create_instance(),
+                    length_tree: state.length_tree.create_instance(),
+                }
+            }
+            0b011 => {
+                if !bitstream.align() {
+                    bitstream.read_bits(16); // padding will be 1..=16, not 0
+                }
+
+                Kind::Uncompressed {
+                    r: [
+                        bitstream.read_u32_le(),
+                        bitstream.read_u32_le(),
+                        bitstream.read_u32_le(),
+                    ],
+                }
+            }
+            _ => todo!("notify error of bad block type"),
+        };
+
+        Block { size, kind }
+    }
+
+    pub(crate) fn decode_element(&self, bitstream: &mut Bitstream, r: &mut [u32; 3]) -> Decoded {
         match &self.kind {
             Kind::Verbatim {
                 main_tree,
                 length_tree,
-            } => {
-                let decoded = decode_element(
-                    bitstream,
-                    &mut r,
-                    DecodeInfo {
-                        aligned_offset_tree: None,
-                        main_tree,
-                        length_tree,
-                    },
-                );
-                (decoded, r)
-            }
+            } => decode_element(
+                bitstream,
+                r,
+                DecodeInfo {
+                    aligned_offset_tree: None,
+                    main_tree,
+                    length_tree,
+                },
+            ),
             Kind::AlignedOffset {
                 aligned_offset_tree,
                 main_tree,
                 length_tree,
-            } => {
-                let decoded = decode_element(
-                    bitstream,
-                    &mut r,
-                    DecodeInfo {
-                        aligned_offset_tree: Some(aligned_offset_tree),
-                        main_tree,
-                        length_tree,
-                    },
-                );
-                (decoded, r)
+            } => decode_element(
+                bitstream,
+                r,
+                DecodeInfo {
+                    aligned_offset_tree: Some(aligned_offset_tree),
+                    main_tree,
+                    length_tree,
+                },
+            ),
+            Kind::Uncompressed { r: new_r } => {
+                r.copy_from_slice(new_r);
+                Decoded::Read(self.size as usize)
             }
-            Kind::Uncompressed { r } => (Decoded::Read(self.size as usize), *r),
         }
     }
 }

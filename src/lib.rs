@@ -27,6 +27,21 @@ pub use window_size::WindowSize;
 /// which can represent less than 32 KB.
 pub const MAX_CHUNK_SIZE: usize = 32 * 1024;
 
+/// Decoder state needed for new blocks.
+// TODO not sure how much we want to keep in DecoderState and Lzxd respectively
+pub(crate) struct DecoderState {
+    /// The window size we're working with.
+    window_size: WindowSize,
+
+    /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
+    /// to its path lengths.
+    main_tree: CanonicalTree,
+
+    /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
+    /// to its path lengths.
+    length_tree: CanonicalTree,
+}
+
 /// The main interface to perform LZXD decompression.
 ///
 /// This structure stores the required state to process the compressed chunks of data in a
@@ -45,9 +60,6 @@ pub const MAX_CHUNK_SIZE: usize = 32 * 1024;
 /// }
 /// ```
 pub struct Lzxd {
-    /// The window size we're working with.
-    window_size: WindowSize,
-
     /// Sliding window into which data is decompressed.
     // TODO proper `Window` struct that handles wrap around for us.
     window: Vec<u8>,
@@ -55,13 +67,8 @@ pub struct Lzxd {
     /// Current position into the sliding window.
     pos: usize,
 
-    /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
-    /// to its path lengths.
-    main_tree: CanonicalTree,
-
-    /// This tree cannot be used directly, it exists only to apply the delta of upcoming trees
-    /// to its path lengths.
-    length_tree: CanonicalTree,
+    /// Current decoder state.
+    state: DecoderState,
 
     /// > The three most recent real match offsets are kept in a list.
     r: [u32; 3],
@@ -92,7 +99,6 @@ impl Lzxd {
         let length_tree = CanonicalTree::new(249);
 
         Self {
-            window_size,
             window: window_size.create_buffer(),
             pos: 0,
             // > Because trees are output several times during compression of large amounts of
@@ -100,8 +106,11 @@ impl Lzxd {
             // > path lengths lengths between the current and previous trees.
             //
             // Because it uses deltas, we need to store the previous value across blocks.
-            main_tree,
-            length_tree,
+            state: DecoderState {
+                window_size,
+                main_tree,
+                length_tree,
+            },
             // > The initial state of R0, R1, R2 is (1, 1, 1).
             r: [1, 1, 1],
             first_chunk_read: false,
@@ -139,87 +148,6 @@ impl Lzxd {
         }
     }
 
-    /// Read the pretrees for the main and length tree, and with those also read the trees
-    /// themselves, using the path lengths from a previous tree if any.
-    ///
-    /// This is used when reading a verbatim or aligned block.
-    fn read_main_and_length_trees(&mut self, bitstream: &mut Bitstream) {
-        // Verbatim block
-        // Entry                                             Comments
-        // Pretree for first 256 elements of main tree       20 elements, 4 bits each
-        // Path lengths of first 256 elements of main tree   Encoded using pretree
-        // Pretree for remainder of main tree                20 elements, 4 bits each
-        // Path lengths of remaining elements of main tree   Encoded using pretree
-        // Pretree for length tree                           20 elements, 4 bits each
-        // Path lengths of elements in length tree           Encoded using pretree
-        // Token sequence (matches and literals)             Specified in section 2.6
-        self.main_tree.update_range_with_pretree(bitstream, 0..256);
-
-        self.main_tree
-            .update_range_with_pretree(bitstream, 256..256 + 8 * self.window_size.position_slots());
-        self.length_tree
-            .update_range_with_pretree(bitstream, 0..249);
-    }
-
-    /// Read the header with information about the next block.
-    fn read_block(&mut self, bitstream: &mut Bitstream) -> Block {
-        // > Each block of compressed data begins with a 3-bit Block Type field.
-        // > Of the eight possible values, only three are valid values for the Block Type
-        // > field.
-        let kind = bitstream.read_bits(3);
-        let size = bitstream.read_u24_be();
-
-        let kind = match kind {
-            0b001 => {
-                self.read_main_and_length_trees(bitstream);
-
-                BlockKind::Verbatim {
-                    main_tree: self.main_tree.create_instance(),
-                    length_tree: self.length_tree.create_instance(),
-                }
-            }
-            0b010 => {
-                // > encoding only the delta path lengths between the current and previous trees
-                //
-                // This means we don't need to worry about deltas on this tree.
-                let aligned_offset_tree = {
-                    let mut path_lengths = vec![0u8; 8];
-                    path_lengths
-                        .iter_mut()
-                        .for_each(|x| *x = bitstream.read_bits(3) as u8);
-
-                    Tree::from_path_lengths(path_lengths)
-                };
-
-                // > An aligned offset block is identical to the verbatim block except for the
-                // > presence of the aligned offset tree preceding the other trees.
-                self.read_main_and_length_trees(bitstream);
-
-                BlockKind::AlignedOffset {
-                    aligned_offset_tree,
-                    main_tree: self.main_tree.create_instance(),
-                    length_tree: self.length_tree.create_instance(),
-                }
-            }
-            0b011 => {
-                if !bitstream.align() {
-                    bitstream.read_bits(16); // padding will be 1..=16, not 0
-                }
-
-                BlockKind::Uncompressed {
-                    r: [
-                        bitstream.read_u32_le(),
-                        bitstream.read_u32_le(),
-                        bitstream.read_u32_le(),
-                    ],
-                }
-            }
-            _ => todo!("notify error of bad block type"),
-        };
-
-        Block { size, kind }
-    }
-
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
     pub fn decompress_next(&mut self, chunk: &[u8]) -> Option<&[u8]> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
@@ -247,12 +175,13 @@ impl Lzxd {
         let start = self.pos;
         while !bitstream.is_empty() {
             if self.current_block.size == 0 {
-                self.current_block = self.read_block(&mut bitstream);
+                self.current_block = Block::read(&mut bitstream, &mut self.state);
             }
 
-            // TODO can we pass self.r as mut?
-            let (decoded, r) = self.current_block.decode_element(&mut bitstream, self.r);
-            self.r = r;
+            let decoded = self
+                .current_block
+                .decode_element(&mut bitstream, &mut self.r);
+
             let advance = match decoded {
                 Decoded::Single(value) => {
                     self.window[self.pos] = value;
