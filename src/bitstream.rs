@@ -106,6 +106,15 @@ impl<'a> Bitstream<'a> {
         hi << 8 | lo
     }
 
+    pub fn align(&mut self) -> bool {
+        if self.remaining == 0 {
+            false
+        } else {
+            self.remaining = 0;
+            true
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         // > the output bitstream is padded with up to 15 bits of zeros to realign the bitstream
         // > on a 16-bit boundary (even byte boundary) for the next 32 KB of data.
@@ -114,6 +123,17 @@ impl<'a> Bitstream<'a> {
         // misinterpret this unless we know the decompressed chunk length to know when to
         // stop reading
         self.buffer.is_empty() && self.peek_bits(self.remaining) == 0
+    }
+
+    /// Copies from the current buffer to the destination output ignoring the representation.
+    ///
+    /// The buffer should be aligned beforehand.
+    ///
+    /// Panics if there is not enough data.
+    pub fn read_raw(&mut self, output: &mut [u8]) {
+        // TODO don't panic
+        output.copy_from_slice(&self.buffer[..output.len()]);
+        self.buffer = &self.buffer[output.len()..];
     }
 }
 
@@ -184,6 +204,31 @@ mod tests {
         assert_eq!(bitstream.read_bits(4), 0);
         assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
         assert_eq!(bitstream.read_bits(4), 0);
+    }
+
+    #[test]
+    fn align() {
+        let bytes = [0b0100_0000, 0b0010_0000, 0b1000_0000, 0b0110_0000];
+        let mut bitstream = Bitstream::new(&bytes);
+
+        assert_eq!(bitstream.read_bits(3), 1);
+        bitstream.align();
+        assert_eq!(bitstream.read_bits(3), 3);
+    }
+
+    #[test]
+    fn no_remain_after_aligned() {
+        let bytes = [0b0100_0000, 0b0010_0000, 0b1000_0000, 0b0110_0000];
+        let mut bitstream = Bitstream::new(&bytes);
+
+        bitstream.read_bits(3);
+        assert_ne!(bitstream.remaining, 0);
+
+        bitstream.align();
+        assert_eq!(bitstream.remaining, 0);
+
+        bitstream.read_bits(16);
+        assert_eq!(bitstream.remaining, 0);
     }
 
     #[test]

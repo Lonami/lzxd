@@ -273,6 +273,10 @@ impl Lzxd {
                 }
             }
             BlockType::Uncompressed => {
+                if !bitstream.align() {
+                    bitstream.read_bits(16); // padding will be 1..=16, not 0
+                }
+
                 self.r = [
                     bitstream.read_u32_le(),
                     bitstream.read_u32_le(),
@@ -340,7 +344,14 @@ impl Lzxd {
                 main_tree = main;
                 length_tree = length;
             }
-            BlockHead::Uncompressed { size: _size, r: _r } => todo!(),
+            BlockHead::Uncompressed { size, r: _r } => {
+                let size = *size as usize;
+                let start = self.pos;
+                let end = start + size;
+                bitstream.read_raw(&mut self.window[start..end]);
+                self.pos += size;
+                return Some(&self.window[start..end]);
+            }
         }
 
         // This is the code path for aligned and verbatim blocks.
@@ -498,5 +509,22 @@ impl Lzxd {
         }
 
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_uncompressed() {
+        let data = [
+            0x00, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x61, 0x62, 0x63, 0x00,
+        ];
+
+        let mut lzxd = Lzxd::new(WindowSize::KB32); // size does not matter
+        let res = lzxd.decompress_next(&data);
+        assert_eq!(res.unwrap(), [b'a', b'b', b'c']);
     }
 }
