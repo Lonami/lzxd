@@ -1,3 +1,5 @@
+use crate::{Bitstream, DecodeFailed, MAX_CHUNK_SIZE};
+
 /// The window size is not stored in the compressed data stream and must be known before
 /// decoding begins.
 ///
@@ -5,8 +7,6 @@
 /// than or equal to the sum of the size of the reference data rounded up to a multiple of
 /// 32_768 and the size of the subject data. However, some implementations also seem to support
 /// a window size of less than 2^17, and this one is no exception.
-use crate::{Bitstream, DecodeFailed, MAX_CHUNK_SIZE};
-
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum WindowSize {
