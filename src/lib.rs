@@ -16,13 +16,14 @@
 mod bitstream;
 mod block;
 mod tree;
-mod window_size;
+mod window;
 
 pub(crate) use bitstream::Bitstream;
 pub(crate) use block::{Block, Decoded, Kind as BlockKind};
 use std::fmt;
 pub(crate) use tree::{CanonicalTree, Tree};
-pub use window_size::WindowSize;
+use window::Window;
+pub use window::WindowSize;
 
 /// A chunk represents exactly 32 KB of uncompressed data until the last chunk in the stream,
 /// which can represent less than 32 KB.
@@ -62,11 +63,7 @@ pub(crate) struct DecoderState {
 /// ```
 pub struct Lzxd {
     /// Sliding window into which data is decompressed.
-    // TODO proper `Window` struct that handles wrap around for us.
-    window: Vec<u8>,
-
-    /// Current position into the sliding window.
-    pos: usize,
+    window: Window,
 
     /// Current decoder state.
     state: DecoderState,
@@ -139,7 +136,6 @@ impl Lzxd {
 
         Self {
             window: window_size.create_buffer(),
-            pos: 0,
             // > Because trees are output several times during compression of large amounts of
             // > data (multiple blocks), LZXD optimizes compression by encoding only the delta
             // > path lengths lengths between the current and previous trees.
@@ -211,7 +207,7 @@ impl Lzxd {
 
         self.try_read_first_chunk(&mut bitstream)?;
 
-        let start = self.pos;
+        let mut decoded_len = 0;
         while !bitstream.is_empty() {
             if self.current_block.size == 0 {
                 self.current_block = Block::read(&mut bitstream, &mut self.state)?;
@@ -223,33 +219,27 @@ impl Lzxd {
 
             let advance = match decoded {
                 Decoded::Single(value) => {
-                    self.window[self.pos] = value;
+                    self.window.push(value);
                     1
                 }
                 Decoded::Match { offset, length } => {
-                    // TODO this can be improved by avoiding %
-                    for i in 0..length {
-                        let li = (self.pos + i) % self.window.len();
-                        let ri = (self.window.len() + self.pos + i - offset) % self.window.len();
-                        self.window[li] = self.window[ri];
-                    }
+                    self.window.copy_from_self(offset, length);
                     length
                 }
                 Decoded::Read(length) => {
                     // Will re-align if needed, just as decompressed reads mandate.
-                    bitstream.read_raw(&mut self.window[self.pos..self.pos + length])?;
+                    self.window.copy_from_bitstream(&mut bitstream, length)?;
                     length
                 }
             };
 
-            self.pos += advance;
+            decoded_len += advance;
             if let Some(value) = self.current_block.size.checked_sub(advance as u32) {
                 self.current_block.size = value;
             } else {
                 return Err(DecodeFailed::OverreadBlock);
             }
         }
-        let end = self.pos;
 
         // > To ensure that an exact number of input bytes represent an exact number of
         // > output bytes for each chunk, after each 32 KB of uncompressed data is
@@ -263,12 +253,10 @@ impl Lzxd {
         // That's the input chunk parsed which aligned to a byte-boundary already. There is
         // no need to align the bitstream because on the next call it will be aligned.
 
-        self.pos = self.pos % self.window.len();
-
         // TODO last chunk may misalign this and on the next iteration we wouldn't be able
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
-        return Ok(&self.window[start..end]);
+        return Ok(&self.window.past_view(decoded_len));
     }
 }
 

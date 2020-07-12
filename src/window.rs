@@ -5,6 +5,8 @@
 /// than or equal to the sum of the size of the reference data rounded up to a multiple of
 /// 32_768 and the size of the subject data. However, some implementations also seem to support
 /// a window size of less than 2^17, and this one is no exception.
+use crate::{Bitstream, DecodeFailed};
+
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum WindowSize {
@@ -32,6 +34,15 @@ pub enum WindowSize {
     MB32 = 0x0200_0000,
 }
 
+/// A sliding window of a certain size.
+///
+/// A `std::collections::VecDeque` is not used because the `deque_make_contiguous` feature
+/// is [nightly-only experimental](https://github.com/rust-lang/rust/issues/70929).
+pub struct Window {
+    pos: usize,
+    buffer: Box<[u8]>,
+}
+
 impl WindowSize {
     /// The window size determines the number of window subdivisions, or position slots.
     pub(crate) fn position_slots(&self) -> usize {
@@ -56,7 +67,44 @@ impl WindowSize {
         *self as usize
     }
 
-    pub(crate) fn create_buffer(&self) -> Vec<u8> {
-        vec![0; self.value()]
+    pub(crate) fn create_buffer(&self) -> Window {
+        Window {
+            pos: 0,
+            buffer: vec![0; self.value()].into_boxed_slice(),
+        }
+    }
+}
+
+impl Window {
+    pub fn push(&mut self, value: u8) {
+        self.buffer[self.pos] = value;
+        self.pos += 1;
+        if self.pos == self.buffer.len() {
+            self.pos = 0;
+        }
+    }
+
+    pub fn copy_from_self(&mut self, offset: usize, length: usize) {
+        // TODO this can be improved by avoiding %
+        for i in 0..length {
+            let li = (self.pos + i) % self.buffer.len();
+            let ri = (self.buffer.len() + self.pos + i - offset) % self.buffer.len();
+            self.buffer[li] = self.buffer[ri];
+        }
+        self.pos += length;
+    }
+
+    pub fn copy_from_bitstream(
+        &mut self,
+        bitstream: &mut Bitstream,
+        length: usize,
+    ) -> Result<(), DecodeFailed> {
+        bitstream.read_raw(&mut self.buffer[self.pos..self.pos + length])?;
+        self.pos += length;
+        Ok(())
+    }
+
+    pub fn past_view(&self, len: usize) -> &[u8] {
+        &self.buffer[self.pos - len..self.pos]
     }
 }
