@@ -113,12 +113,25 @@ impl Window {
         Ok(())
     }
 
-    pub fn past_view(&self, len: usize) -> Result<&[u8], DecodeFailed> {
-        if len < MAX_CHUNK_SIZE {
-            Ok(&self.buffer[self.pos - len..self.pos])
-        } else {
-            Err(DecodeFailed::ChunkTooLong)
+    pub fn past_view(&mut self, len: usize) -> Result<&[u8], DecodeFailed> {
+        if len >= MAX_CHUNK_SIZE {
+            return Err(DecodeFailed::ChunkTooLong);
         }
+
+        if len > self.pos {
+            let shift = len - self.pos;
+            self.pos += shift;
+
+            let tmp = self.buffer[self.buffer.len() - shift..]
+                .into_iter()
+                .copied()
+                .collect::<Vec<_>>();
+
+            self.buffer.copy_within(0..self.buffer.len() - shift, shift);
+            self.buffer[..shift].copy_from_slice(&tmp);
+        }
+
+        Ok(&self.buffer[self.pos - len..self.pos])
     }
 }
 
@@ -133,7 +146,19 @@ mod tests {
         window.push(2);
         window.push(3);
         assert_eq!(window.past_view(3).unwrap(), &[1, 2, 3]);
-        // TODO test at end of window
+    }
+
+    #[test]
+    fn check_push_at_boundary() {
+        let mut window = WindowSize::KB32.create_buffer();
+        for _ in 0..((1 << 15) - 2) {
+            window.push(0);
+        }
+        window.push(1);
+        window.push(2);
+        window.push(3);
+        window.push(4);
+        assert_eq!(window.past_view(4).unwrap(), &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -155,12 +180,24 @@ mod tests {
         window.push(3);
         assert_eq!(window.past_view(2).unwrap(), &[2, 3]);
         assert_eq!(window.past_view(3).unwrap(), &[1, 2, 3]);
-        // TODO test at end of window
+    }
+
+    #[test]
+    fn check_past_view_at_boundary() {
+        let mut window = WindowSize::KB32.create_buffer();
+        for _ in 0..((1 << 15) - 2) {
+            window.push(0);
+        }
+        window.push(1);
+        window.push(2);
+        window.push(3);
+        window.push(4);
+        assert_eq!(window.past_view(4).unwrap(), &[1, 2, 3, 4]);
     }
 
     #[test]
     fn check_past_view_too_long() {
-        let window = WindowSize::KB32.create_buffer();
+        let mut window = WindowSize::KB32.create_buffer();
         assert_eq!(
             window.past_view(1 << 15 + 1),
             Err(DecodeFailed::ChunkTooLong)
