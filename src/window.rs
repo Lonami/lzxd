@@ -145,7 +145,8 @@ mod tests {
         window.push(1);
         window.push(2);
         window.push(3);
-        assert_eq!(window.past_view(3).unwrap(), &[1, 2, 3]);
+        assert_eq!(&window.buffer[..3], &[1, 2, 3]);
+        assert!(window.buffer[3..].iter().all(|&x| x == 0));
     }
 
     #[test]
@@ -158,26 +159,33 @@ mod tests {
         window.push(2);
         window.push(3);
         window.push(4);
-        assert_eq!(window.past_view(4).unwrap(), &[1, 2, 3, 4]);
+        assert_eq!(&window.buffer[window.buffer.len() - 2..], &[1, 2]);
+        assert_eq!(&window.buffer[..2], &[3, 4]);
+        assert!(window.buffer[2..window.buffer.len() - 2]
+            .iter()
+            .all(|&x| x == 0));
     }
 
     #[test]
     fn check_copy_from_self() {
         let mut window = WindowSize::KB32.create_buffer();
-        window.push(1);
-        window.push(2);
-        window.push(3);
+        window.buffer[0] = 1;
+        window.buffer[1] = 2;
+        window.buffer[2] = 3;
+        window.pos = 3;
         window.copy_from_self(3, 2);
-        assert_eq!(window.past_view(5).unwrap(), &[1, 2, 3, 1, 2]);
+        assert_eq!(&window.buffer[..5], &[1, 2, 3, 1, 2]);
+        assert!(window.buffer[5..].iter().all(|&x| x == 0));
         // TODO test at end of window
     }
 
     #[test]
     fn check_past_view() {
         let mut window = WindowSize::KB32.create_buffer();
-        window.push(1);
-        window.push(2);
-        window.push(3);
+        window.buffer[0] = 1;
+        window.buffer[1] = 2;
+        window.buffer[2] = 3;
+        window.pos = 3;
         assert_eq!(window.past_view(2).unwrap(), &[2, 3]);
         assert_eq!(window.past_view(3).unwrap(), &[1, 2, 3]);
     }
@@ -185,13 +193,11 @@ mod tests {
     #[test]
     fn check_past_view_at_boundary() {
         let mut window = WindowSize::KB32.create_buffer();
-        for _ in 0..((1 << 15) - 2) {
-            window.push(0);
-        }
-        window.push(1);
-        window.push(2);
-        window.push(3);
-        window.push(4);
+        window.buffer[window.buffer.len() - 2] = 1;
+        window.buffer[window.buffer.len() - 1] = 2;
+        window.buffer[0] = 3;
+        window.buffer[1] = 4;
+        window.pos = 2;
         assert_eq!(window.past_view(4).unwrap(), &[1, 2, 3, 4]);
     }
 
