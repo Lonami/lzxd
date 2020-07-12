@@ -136,7 +136,7 @@ impl Window {
 
         if len > self.pos {
             let shift = len - self.pos;
-            self.pos += shift;
+            self.advance(shift);
 
             let tmp = self.buffer[self.buffer.len() - shift..]
                 .into_iter()
