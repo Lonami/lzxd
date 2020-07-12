@@ -1,4 +1,4 @@
-use crate::Bitstream;
+use crate::{Bitstream, DecodeFailed};
 use std::fmt;
 use std::num::NonZeroU8;
 use std::ops::Range;
@@ -78,7 +78,11 @@ impl CanonicalTree {
     }
 
     // Note: the tree already exists and is used to apply the deltas.
-    pub fn update_range_with_pretree(&mut self, bitstream: &mut Bitstream, range: Range<usize>) {
+    pub fn update_range_with_pretree(
+        &mut self,
+        bitstream: &mut Bitstream,
+        range: Range<usize>,
+    ) -> Result<(), DecodeFailed> {
         // > Each of the 17 possible values of (len[x] - prev_len[x]) mod 17, plus three
         // > additional codes used for run-length encoding, are not output directly as 5-bit
         // > numbers but are instead encoded via a Huffman tree called the pretree. The pretree
@@ -87,10 +91,10 @@ impl CanonicalTree {
         // > to output the path length of each of the 20 pretree elements. Once again, a zero
         // > path length indicates a zero-frequency element.
         let pretree = {
-            let mut path_lengths = vec![0u8; 20];
-            path_lengths
-                .iter_mut()
-                .for_each(|x| *x = bitstream.read_bits(4) as u8);
+            let mut path_lengths = Vec::with_capacity(20);
+            for _ in 0..20 {
+                path_lengths.push(bitstream.read_bits(4)? as u8)
+            }
 
             Tree::from_path_lengths(path_lengths)
         };
@@ -99,7 +103,7 @@ impl CanonicalTree {
         let mut i = range.start;
         while i < range.end {
             // > The "real" tree is then encoded using the pretree Huffman codes.
-            let code = pretree.decode_element(bitstream) as u8;
+            let code = pretree.decode_element(bitstream)?;
 
             // > Elements can be encoded in one of two ways: if several consecutive elements have
             // > the same path length, run-length encoding is employed; otherwise, the element is
@@ -107,39 +111,41 @@ impl CanonicalTree {
             // > previous path length of the tree, mod 17.
             match code {
                 0..=16 => {
-                    self.path_lengths[i] = (17 + self.path_lengths[i] - code) % 17;
+                    self.path_lengths[i] = (17 + self.path_lengths[i] - code as u8) % 17;
                     i += 1;
                 }
                 // > Codes 17, 18, and 19 are used to represent consecutive elements that have the
                 // > same path length.
                 17 => {
-                    let zeros = bitstream.read_bits(4);
+                    let zeros = bitstream.read_bits(4)?;
                     self.path_lengths[i..i + zeros as usize + 4]
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 4;
                 }
                 18 => {
-                    let zeros = bitstream.read_bits(5);
+                    let zeros = bitstream.read_bits(5)?;
                     self.path_lengths[i..i + zeros as usize + 20]
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 20;
                 }
                 19 => {
-                    let same = bitstream.read_bits(1);
+                    let same = bitstream.read_bits(1)?;
                     // "Decode new code" is used to parse the next code from the bitstream, which
                     // has a value range of [0, 16].
-                    let code = pretree.decode_element(bitstream) as u8;
+                    let code = pretree.decode_element(bitstream)? as u8;
                     let value = (17 + self.path_lengths[i] - code) % 17;
                     self.path_lengths[i..i + same as usize + 4]
                         .iter_mut()
                         .for_each(|x| *x = value);
                     i += same as usize + 4;
                 }
-                _ => panic!(format!("invalid pretree code element {}", code)),
+                _ => return Err(DecodeFailed::InvalidPretreeElement(code)),
             };
         }
+
+        Ok(())
     }
 }
 
@@ -149,14 +155,14 @@ impl Tree {
         CanonicalTree { path_lengths }.create_instance()
     }
 
-    pub fn decode_element(&self, bitstream: &mut Bitstream) -> u16 {
+    pub fn decode_element(&self, bitstream: &mut Bitstream) -> Result<u16, DecodeFailed> {
         // Perform the inverse translation, peeking as many bits as our tree is…
         let code = self.huffman_tree[bitstream.peek_bits(self.largest_length.get()) as usize];
 
         // …and advancing the stream for as many bits this code actually takes (read to seek).
-        bitstream.read_bits(self.path_lengths[code as usize]);
+        bitstream.read_bits(self.path_lengths[code as usize])?;
 
-        code
+        Ok(code)
     }
 }
 
@@ -225,10 +231,10 @@ mod tests {
 
         let buffer = [0x5b, 0xda, 0x3f, 0xf8];
         let mut bitstream = Bitstream::new(&buffer);
-        bitstream.read_bits(11);
-        assert_eq!(tree.decode_element(&mut bitstream), 3);
-        assert_eq!(tree.decode_element(&mut bitstream), 5);
-        assert_eq!(tree.decode_element(&mut bitstream), 6);
-        assert_eq!(tree.decode_element(&mut bitstream), 2);
+        bitstream.read_bits(11).unwrap();
+        assert_eq!(tree.decode_element(&mut bitstream), Ok(3));
+        assert_eq!(tree.decode_element(&mut bitstream), Ok(5));
+        assert_eq!(tree.decode_element(&mut bitstream), Ok(6));
+        assert_eq!(tree.decode_element(&mut bitstream), Ok(2));
     }
 }

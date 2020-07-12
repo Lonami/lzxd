@@ -1,4 +1,4 @@
-use crate::{Bitstream, DecoderState, Tree};
+use crate::{Bitstream, DecodeFailed, DecoderState, Tree};
 
 // if position_slot < 4 {
 //     0
@@ -99,7 +99,10 @@ pub struct Block {
 /// themselves, using the path lengths from a previous tree if any.
 ///
 /// This is used when reading a verbatim or aligned block.
-fn read_main_and_length_trees(bitstream: &mut Bitstream, state: &mut DecoderState) {
+fn read_main_and_length_trees(
+    bitstream: &mut Bitstream,
+    state: &mut DecoderState,
+) -> Result<(), DecodeFailed> {
     // Verbatim block
     // Entry                                             Comments
     // Pretree for first 256 elements of main tree       20 elements, 4 bits each
@@ -109,15 +112,19 @@ fn read_main_and_length_trees(bitstream: &mut Bitstream, state: &mut DecoderStat
     // Pretree for length tree                           20 elements, 4 bits each
     // Path lengths of elements in length tree           Encoded using pretree
     // Token sequence (matches and literals)             Specified in section 2.6
-    state.main_tree.update_range_with_pretree(bitstream, 0..256);
+    state
+        .main_tree
+        .update_range_with_pretree(bitstream, 0..256)?;
 
     state
         .main_tree
-        .update_range_with_pretree(bitstream, 256..256 + 8 * state.window_size.position_slots());
+        .update_range_with_pretree(bitstream, 256..256 + 8 * state.window_size.position_slots())?;
 
     state
         .length_tree
-        .update_range_with_pretree(bitstream, 0..249);
+        .update_range_with_pretree(bitstream, 0..249)?;
+
+    Ok(())
 }
 
 fn decode_element(
@@ -128,12 +135,12 @@ fn decode_element(
         main_tree,
         length_tree,
     }: DecodeInfo,
-) -> Decoded {
+) -> Result<Decoded, DecodeFailed> {
     // Decoding Matches and Literals (Aligned and Verbatim Blocks)
-    let main_element = main_tree.decode_element(bitstream);
+    let main_element = main_tree.decode_element(bitstream)?;
 
     // Check if it is a literal character.
-    if main_element < 256 {
+    Ok(if main_element < 256 {
         // It is a literal, so copy the literal to output.
         Decoded::Single(main_element as u8)
     } else {
@@ -142,7 +149,7 @@ fn decode_element(
 
         let match_length = if length_header == 7 {
             // Length of the footer.
-            length_tree.decode_element(bitstream) + 7 + 2
+            length_tree.decode_element(bitstream)? + 7 + 2
         } else {
             length_header + 2 // no length footer
                               // Decoding a match length (if a match length < 257).
@@ -170,18 +177,18 @@ fn decode_element(
 
                 // This means there are some aligned bits.
                 if offset_bits >= 3 {
-                    verbatim_bits = (bitstream.read_bits(offset_bits - 3)) << 3;
-                    aligned_bits = aligned_offset_tree.decode_element(bitstream);
+                    verbatim_bits = bitstream.read_bits(offset_bits - 3)? << 3;
+                    aligned_bits = aligned_offset_tree.decode_element(bitstream)?;
                 } else {
                     // 0, 1, or 2 verbatim bits
-                    verbatim_bits = bitstream.read_bits(offset_bits);
+                    verbatim_bits = bitstream.read_bits(offset_bits)?;
                     aligned_bits = 0;
                 }
 
                 BASE_POSITION[position_slot as usize] + verbatim_bits as u32 + aligned_bits as u32
             } else {
                 // Block_type is a verbatim_block.
-                let verbatim_bits = bitstream.read_bits(offset_bits);
+                let verbatim_bits = bitstream.read_bits(offset_bits)?;
                 BASE_POSITION[position_slot as usize] + verbatim_bits as u32
             };
 
@@ -237,20 +244,23 @@ fn decode_element(
             offset: match_offset as usize,
             length: match_length as usize,
         }
-    }
+    })
 }
 
 impl Block {
-    pub(crate) fn read(bitstream: &mut Bitstream, state: &mut DecoderState) -> Self {
+    pub(crate) fn read(
+        bitstream: &mut Bitstream,
+        state: &mut DecoderState,
+    ) -> Result<Self, DecodeFailed> {
         // > Each block of compressed data begins with a 3-bit Block Type field.
         // > Of the eight possible values, only three are valid values for the Block Type
         // > field.
-        let kind = bitstream.read_bits(3);
-        let size = bitstream.read_u24_be();
+        let kind = bitstream.read_bits(3)? as u8;
+        let size = bitstream.read_u24_be()?;
 
         let kind = match kind {
             0b001 => {
-                read_main_and_length_trees(bitstream, state);
+                read_main_and_length_trees(bitstream, state)?;
 
                 Kind::Verbatim {
                     main_tree: state.main_tree.create_instance(),
@@ -262,17 +272,17 @@ impl Block {
                 //
                 // This means we don't need to worry about deltas on this tree.
                 let aligned_offset_tree = {
-                    let mut path_lengths = vec![0u8; 8];
-                    path_lengths
-                        .iter_mut()
-                        .for_each(|x| *x = bitstream.read_bits(3) as u8);
+                    let mut path_lengths = Vec::with_capacity(8);
+                    for _ in 0..8 {
+                        path_lengths.push(bitstream.read_bits(3)? as u8);
+                    }
 
                     Tree::from_path_lengths(path_lengths)
                 };
 
                 // > An aligned offset block is identical to the verbatim block except for the
                 // > presence of the aligned offset tree preceding the other trees.
-                read_main_and_length_trees(bitstream, state);
+                read_main_and_length_trees(bitstream, state)?;
 
                 Kind::AlignedOffset {
                     aligned_offset_tree,
@@ -282,24 +292,28 @@ impl Block {
             }
             0b011 => {
                 if !bitstream.align() {
-                    bitstream.read_bits(16); // padding will be 1..=16, not 0
+                    bitstream.read_bits(16)?; // padding will be 1..=16, not 0
                 }
 
                 Kind::Uncompressed {
                     r: [
-                        bitstream.read_u32_le(),
-                        bitstream.read_u32_le(),
-                        bitstream.read_u32_le(),
+                        bitstream.read_u32_le()?,
+                        bitstream.read_u32_le()?,
+                        bitstream.read_u32_le()?,
                     ],
                 }
             }
-            _ => todo!("notify error of bad block type"),
+            _ => return Err(DecodeFailed::InvalidBlock(kind)),
         };
 
-        Block { size, kind }
+        Ok(Block { size, kind })
     }
 
-    pub(crate) fn decode_element(&self, bitstream: &mut Bitstream, r: &mut [u32; 3]) -> Decoded {
+    pub(crate) fn decode_element(
+        &self,
+        bitstream: &mut Bitstream,
+        r: &mut [u32; 3],
+    ) -> Result<Decoded, DecodeFailed> {
         match &self.kind {
             Kind::Verbatim {
                 main_tree,
@@ -328,7 +342,7 @@ impl Block {
             ),
             Kind::Uncompressed { r: new_r } => {
                 r.copy_from_slice(new_r);
-                Decoded::Read(self.size as usize)
+                Ok(Decoded::Read(self.size as usize))
             }
         }
     }

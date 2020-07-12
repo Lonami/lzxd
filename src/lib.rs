@@ -20,6 +20,7 @@ mod window_size;
 
 pub(crate) use bitstream::Bitstream;
 pub(crate) use block::{Block, Decoded, Kind as BlockKind};
+use std::fmt;
 pub(crate) use tree::{CanonicalTree, Tree};
 pub use window_size::WindowSize;
 
@@ -84,6 +85,41 @@ pub struct Lzxd {
     current_block: Block,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum DecodeFailed {
+    /// The chunk length must be divisible by 2.
+    OddLength,
+
+    /// The chunk data caused a read of more items than the current block had in a single step.
+    OverreadBlock,
+
+    /// There was not enough data in the chunk to fully decode, and a premature end was found.
+    UnexpectedEof,
+
+    /// An invalid block type was found.
+    InvalidBlock(u8),
+
+    /// An invalid pretree element was found.
+    InvalidPretreeElement(u16),
+}
+
+impl fmt::Display for DecodeFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use DecodeFailed::*;
+
+        match self {
+            OddLength => write!(f, "chunk length must be divisible by 2"),
+            OverreadBlock => write!(
+                f,
+                "read more items than available in the block in a single step"
+            ),
+            UnexpectedEof => write!(f, "reached end of chunk without fully decoding it"),
+            InvalidBlock(kind) => write!(f, "block type {} is invalid", kind),
+            InvalidPretreeElement(elem) => write!(f, "found invalid pretree element {}", elem),
+        }
+    }
+}
+
 impl Lzxd {
     /// Creates a new instance of the LZXD decoder state. The [`WindowSize`] must be obtained
     /// from elsewhere (e.g. it may be predetermined to a certain value), and if it's wrong,
@@ -124,7 +160,7 @@ impl Lzxd {
     }
 
     /// Try reading the header for the first chunk.
-    fn try_read_first_chunk(&mut self, bitstream: &mut Bitstream) {
+    fn try_read_first_chunk(&mut self, bitstream: &mut Bitstream) -> Result<(), DecodeFailed> {
         // > The first bit in the first chunk in the LZXD bitstream (following the 2-byte,
         // > chunk-size prefix described in section 2.2.1) indicates the presence or absence of
         // > two 16-bit fields immediately following the single bit. If the bit is set, E8
@@ -132,10 +168,10 @@ impl Lzxd {
         if !self.first_chunk_read {
             self.first_chunk_read = true;
 
-            let e8_translation = bitstream.read_bit() != 0;
+            let e8_translation = bitstream.read_bit()? != 0;
             self._e8_translation_size = if e8_translation {
-                let high = bitstream.read_u16_le() as u32;
-                let low = bitstream.read_u16_le() as u32;
+                let high = bitstream.read_u16_le()? as u32;
+                let low = bitstream.read_u16_le()? as u32;
                 Some((high << 16) | low)
             } else {
                 None
@@ -146,10 +182,12 @@ impl Lzxd {
                 todo!("e8 translation not implemented");
             }
         }
+
+        Ok(())
     }
 
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
-    pub fn decompress_next(&mut self, chunk: &[u8]) -> Option<&[u8]> {
+    pub fn decompress_next(&mut self, chunk: &[u8]) -> Result<&[u8], DecodeFailed> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
         // > stream, which can represent less than 32 KB.
         //
@@ -162,25 +200,23 @@ impl Lzxd {
         // set to 0xff where it also includes the uncompressed chunk size.
         //
         // TODO maybe the docs could clarify whether this length is compressed or not
-        // TODO instead of panicking, we should probably return proper errors (here and everywhere)
-        assert!(
-            chunk.len() % 2 == 0,
-            "compressed chunks must be aligned to 16 bits"
-        );
+        if chunk.len() % 2 != 0 {
+            return Err(DecodeFailed::OddLength);
+        }
 
         let mut bitstream = Bitstream::new(chunk);
 
-        self.try_read_first_chunk(&mut bitstream);
+        self.try_read_first_chunk(&mut bitstream)?;
 
         let start = self.pos;
         while !bitstream.is_empty() {
             if self.current_block.size == 0 {
-                self.current_block = Block::read(&mut bitstream, &mut self.state);
+                self.current_block = Block::read(&mut bitstream, &mut self.state)?;
             }
 
             let decoded = self
                 .current_block
-                .decode_element(&mut bitstream, &mut self.r);
+                .decode_element(&mut bitstream, &mut self.r)?;
 
             let advance = match decoded {
                 Decoded::Single(value) => {
@@ -197,15 +233,17 @@ impl Lzxd {
                     length
                 }
                 Decoded::Read(length) => {
-                    bitstream.read_raw(&mut self.window[self.pos..self.pos + length]);
+                    bitstream.read_raw(&mut self.window[self.pos..self.pos + length])?;
                     length
                 }
             };
 
             self.pos += advance;
-            // TODO don't panic on underflow
-            // TODO can/should we do this in decode_element?
-            self.current_block.size -= advance as u32;
+            if let Some(value) = self.current_block.size.checked_sub(advance as u32) {
+                self.current_block.size = value;
+            } else {
+                return Err(DecodeFailed::OverreadBlock);
+            }
         }
         let end = self.pos;
 
@@ -226,7 +264,7 @@ impl Lzxd {
         // TODO last chunk may misalign this and on the next iteration we wouldn't be able
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
-        return Some(&self.window[start..end]);
+        return Ok(&self.window[start..end]);
     }
 }
 

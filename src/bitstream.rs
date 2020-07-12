@@ -8,6 +8,8 @@
 /// > Given an input stream of bits named a, b, c, ..., x, y, z, A, B, C, D, E, F, the output
 /// > byte stream (with byte boundaries highlighted) would be as follows:
 /// > [i|j|k|l|m|n|o#p|a|b|c|d|e|f|g|h#y|z|A|B|C|D|E|F#q|r|s|t|u|v|w|x]
+use crate::DecodeFailed;
+
 pub struct Bitstream<'a> {
     buffer: &'a [u8],
     // Next number in the bitstream.
@@ -17,7 +19,14 @@ pub struct Bitstream<'a> {
 }
 
 impl<'a> Bitstream<'a> {
+    /// # Panics
+    ///
+    /// Panics if `buffer` is not evenly divisible.
     pub fn new(buffer: &'a [u8]) -> Self {
+        if buffer.len() % 2 != 0 {
+            panic!("bitstream buffer must be evenly divisible");
+        }
+
         Self {
             buffer,
             n: 0,
@@ -26,28 +35,32 @@ impl<'a> Bitstream<'a> {
     }
 
     // Advance the buffer to the next 16-bit integer.
-    #[inline(always)]
-    fn advance_buffer(&mut self) {
+    fn advance_buffer(&mut self) -> Result<(), DecodeFailed> {
+        if self.buffer.is_empty() {
+            return Err(DecodeFailed::UnexpectedEof);
+        }
+
         self.remaining = 16;
         self.n = u16::from_le_bytes([self.buffer[0], self.buffer[1]]);
         self.buffer = &self.buffer[2..];
+        Ok(())
     }
 
-    pub fn read_bit(&mut self) -> u16 {
+    pub fn read_bit(&mut self) -> Result<u16, DecodeFailed> {
         if self.remaining == 0 {
-            self.advance_buffer();
+            self.advance_buffer()?;
         }
 
         self.remaining -= 1;
         self.n = self.n.rotate_left(1);
-        self.n & 1
+        Ok(self.n & 1)
     }
 
-    pub fn read_bits(&mut self, bits: u8) -> u16 {
+    pub fn read_bits(&mut self, bits: u8) -> Result<u16, DecodeFailed> {
         assert!(bits <= 16);
         debug_assert!(self.remaining <= 16);
 
-        if bits <= self.remaining {
+        Ok(if bits <= self.remaining {
             self.remaining -= bits;
             self.n = self.n.rotate_left(bits as u32);
             self.n & ((1 << bits) - 1)
@@ -55,7 +68,7 @@ impl<'a> Bitstream<'a> {
             // No need to store `rol` result in `n` as we're about to overwrite it.
             let hi = self.n.rotate_left(self.remaining as u32) & ((1 << self.remaining) - 1);
             let bits = bits - self.remaining;
-            self.advance_buffer();
+            self.advance_buffer()?;
 
             self.remaining -= bits;
             self.n = self.n.rotate_left(bits as u32);
@@ -63,7 +76,7 @@ impl<'a> Bitstream<'a> {
             let lo = self.n & ((1u32 << bits) as u16).wrapping_sub(1);
 
             ((hi as u32) << bits) as u16 | lo
-        }
+        })
     }
 
     pub fn peek_bits(&self, bits: u8) -> u16 {
@@ -90,20 +103,20 @@ impl<'a> Bitstream<'a> {
         }
     }
 
-    pub fn read_u16_le(&mut self) -> u16 {
-        self.read_bits(16).swap_bytes()
+    pub fn read_u16_le(&mut self) -> Result<u16, DecodeFailed> {
+        Ok(self.read_bits(16)?.swap_bytes())
     }
 
-    pub fn read_u32_le(&mut self) -> u32 {
-        let lo = self.read_u16_le() as u32;
-        let hi = self.read_u16_le() as u32;
-        (hi << 16) | lo
+    pub fn read_u32_le(&mut self) -> Result<u32, DecodeFailed> {
+        let lo = self.read_u16_le()? as u32;
+        let hi = self.read_u16_le()? as u32;
+        Ok((hi << 16) | lo)
     }
 
-    pub fn read_u24_be(&mut self) -> u32 {
-        let hi = self.read_bits(16) as u32;
-        let lo = self.read_bits(8) as u32;
-        hi << 8 | lo
+    pub fn read_u24_be(&mut self) -> Result<u32, DecodeFailed> {
+        let hi = self.read_bits(16)? as u32;
+        let lo = self.read_bits(8)? as u32;
+        Ok(hi << 8 | lo)
     }
 
     pub fn align(&mut self) -> bool {
@@ -130,10 +143,14 @@ impl<'a> Bitstream<'a> {
     /// The buffer should be aligned beforehand.
     ///
     /// Panics if there is not enough data.
-    pub fn read_raw(&mut self, output: &mut [u8]) {
-        // TODO don't panic
+    pub fn read_raw(&mut self, output: &mut [u8]) -> Result<(), DecodeFailed> {
+        if self.buffer.len() < output.len() {
+            return Err(DecodeFailed::UnexpectedEof);
+        }
+
         output.copy_from_slice(&self.buffer[..output.len()]);
         self.buffer = &self.buffer[output.len()..];
+        Ok(())
     }
 }
 
@@ -157,7 +174,7 @@ mod tests {
             .copied()
             .enumerate()
             .for_each(|(value, bit_length)| {
-                assert_eq!(bitstream.read_bits(bit_length), value as u16);
+                assert_eq!(bitstream.read_bits(bit_length), Ok(value as u16));
             });
     }
 
@@ -168,8 +185,8 @@ mod tests {
         ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
 
         let mut bitstream = Bitstream::new(&bytes);
-        assert_eq!(bitstream.read_u16_le(), 0b00000111_11100000);
-        assert_eq!(bitstream.read_u16_le(), 0b11111000_00011111);
+        assert_eq!(bitstream.read_u16_le(), Ok(0b00000111_11100000));
+        assert_eq!(bitstream.read_u16_le(), Ok(0b11111000_00011111));
     }
 
     #[test]
@@ -180,9 +197,9 @@ mod tests {
 
         let mut bitstream = Bitstream::new(&bytes);
 
-        assert_eq!(bitstream.read_bits(11), 0);
-        assert_eq!(bitstream.read_u16_le(), 0b00000001_10001_100);
-        assert_eq!(bitstream.read_bits(5), 0);
+        assert_eq!(bitstream.read_bits(11), Ok(0));
+        assert_eq!(bitstream.read_u16_le(), Ok(0b00000001_10001_100));
+        assert_eq!(bitstream.read_bits(5), Ok(0));
     }
 
     #[test]
@@ -190,7 +207,7 @@ mod tests {
         let bytes = [0x56, 0x78, 0x12, 0x34];
         let mut bitstream = Bitstream::new(&bytes);
 
-        assert_eq!(bitstream.read_u32_le(), 0x12345678);
+        assert_eq!(bitstream.read_u32_le(), Ok(0x12345678));
     }
 
     #[test]
@@ -201,9 +218,9 @@ mod tests {
 
         let mut bitstream = Bitstream::new(&bytes);
 
-        assert_eq!(bitstream.read_bits(4), 0);
-        assert_eq!(bitstream.read_u24_be(), 0b1100_0001_1000_0001_1000_0011);
-        assert_eq!(bitstream.read_bits(4), 0);
+        assert_eq!(bitstream.read_bits(4), Ok(0));
+        assert_eq!(bitstream.read_u24_be(), Ok(0b1100_0001_1000_0001_1000_0011));
+        assert_eq!(bitstream.read_bits(4), Ok(0));
     }
 
     #[test]
@@ -211,9 +228,9 @@ mod tests {
         let bytes = [0b0100_0000, 0b0010_0000, 0b1000_0000, 0b0110_0000];
         let mut bitstream = Bitstream::new(&bytes);
 
-        assert_eq!(bitstream.read_bits(3), 1);
+        assert_eq!(bitstream.read_bits(3), Ok(1));
         bitstream.align();
-        assert_eq!(bitstream.read_bits(3), 3);
+        assert_eq!(bitstream.read_bits(3), Ok(3));
     }
 
     #[test]
@@ -221,13 +238,13 @@ mod tests {
         let bytes = [0b0100_0000, 0b0010_0000, 0b1000_0000, 0b0110_0000];
         let mut bitstream = Bitstream::new(&bytes);
 
-        bitstream.read_bits(3);
+        bitstream.read_bits(3).unwrap();
         assert_ne!(bitstream.remaining, 0);
 
         bitstream.align();
         assert_eq!(bitstream.remaining, 0);
 
-        bitstream.read_bits(16);
+        bitstream.read_bits(16).unwrap();
         assert_eq!(bitstream.remaining, 0);
     }
 
@@ -240,9 +257,9 @@ mod tests {
         let bytes = [0xab, 0xcd];
         let mut bitstream = Bitstream::new(&bytes);
         assert!(!bitstream.is_empty());
-        bitstream.read_bits(15);
+        bitstream.read_bits(15).unwrap();
         assert!(!bitstream.is_empty());
-        bitstream.read_bit();
+        bitstream.read_bit().unwrap();
         assert!(bitstream.is_empty());
     }
 
