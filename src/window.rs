@@ -116,3 +116,49 @@ impl Window {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_push() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.push(1);
+        window.push(2);
+        window.push(3);
+        assert_eq!(window.past_view(3).unwrap(), &[1, 2, 3]);
+        // TODO test at end of window
+    }
+
+    #[test]
+    fn check_copy_from_self() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.push(1);
+        window.push(2);
+        window.push(3);
+        window.copy_from_self(3, 2);
+        assert_eq!(window.past_view(5).unwrap(), &[1, 2, 3, 1, 2]);
+        // TODO test at end of window
+    }
+
+    #[test]
+    fn check_past_view() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.push(1);
+        window.push(2);
+        window.push(3);
+        assert_eq!(window.past_view(2).unwrap(), &[2, 3]);
+        assert_eq!(window.past_view(3).unwrap(), &[1, 2, 3]);
+        // TODO test at end of window
+    }
+
+    #[test]
+    fn check_past_view_too_long() {
+        let window = WindowSize::KB32.create_buffer();
+        assert_eq!(
+            window.past_view(1 << 15 + 1),
+            Err(DecodeFailed::ChunkTooLong)
+        );
+    }
+}
