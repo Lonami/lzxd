@@ -96,8 +96,13 @@ impl Window {
     }
 
     pub fn copy_from_self(&mut self, offset: usize, length: usize) {
-        if self.pos + length < self.buffer.len() && offset <= self.pos {
+        // For the fast path:
+        // * Source cannot wrap around
+        // * `copy_within` won't overwrite as we go but we need that
+        // * Destination cannot wrap around
+        if offset <= self.pos && length <= offset && self.pos + length < self.buffer.len() {
             // Best case: neither source or destination wrap around
+            // TODO write a test for this because it used to fail
             let start = self.pos - offset;
             self.buffer.copy_within(start..start + length, self.pos);
         } else {
@@ -220,6 +225,19 @@ mod tests {
         assert_eq!(window.pos, 5);
         assert_eq!(&window.buffer[..5], &[1, 2, 3, 1, 2]);
         assert!(window.buffer[5..].iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn check_copy_from_self_overlap() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.buffer[0] = 1;
+        window.buffer[1] = 2;
+        window.buffer[2] = 3;
+        window.pos = 3;
+        window.copy_from_self(2, 3);
+        assert_eq!(window.pos, 6);
+        assert_eq!(&window.buffer[..6], &[1, 2, 3, 2, 3, 2]);
+        assert!(window.buffer[6..].iter().all(|&x| x == 0));
     }
 
     #[test]
