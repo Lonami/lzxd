@@ -233,6 +233,7 @@ impl Lzxd {
                     length
                 }
                 Decoded::Read(length) => {
+                    // Will re-align if needed, just as decompressed reads mandate.
                     bitstream.read_raw(&mut self.window[self.pos..self.pos + length])?;
                     length
                 }

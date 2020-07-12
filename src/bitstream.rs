@@ -140,16 +140,19 @@ impl<'a> Bitstream<'a> {
 
     /// Copies from the current buffer to the destination output ignoring the representation.
     ///
-    /// The buffer should be aligned beforehand.
+    /// The buffer should be aligned beforehand, otherwise bits may be discarded.
     ///
-    /// Panics if there is not enough data.
+    /// If the output length is not evenly divisible, such padding byte will be discarded.
     pub fn read_raw(&mut self, output: &mut [u8]) -> Result<(), DecodeFailed> {
-        if self.buffer.len() < output.len() {
+        // Add 1 to the len if it's odd
+        let real_len = output.len() + output.len() % 2;
+
+        if self.buffer.len() < real_len {
             return Err(DecodeFailed::UnexpectedEof);
         }
 
         output.copy_from_slice(&self.buffer[..output.len()]);
-        self.buffer = &self.buffer[output.len()..];
+        self.buffer = &self.buffer[real_len..];
         Ok(())
     }
 }
