@@ -138,11 +138,13 @@ impl Window {
     }
 
     pub fn past_view(&mut self, len: usize) -> Result<&[u8], DecodeFailed> {
-        if len >= MAX_CHUNK_SIZE {
+        if len > MAX_CHUNK_SIZE {
             return Err(DecodeFailed::ChunkTooLong);
         }
 
-        if len > self.pos {
+        // Being at zero means we're actually at max length where is impossible for `len` to be
+        // bigger and we would not want to bother shifting the entire array to end where it was.
+        if self.pos != 0 && len > self.pos {
             let shift = len - self.pos;
             self.advance(shift);
 
@@ -155,7 +157,14 @@ impl Window {
             self.buffer[..shift].copy_from_slice(&tmp);
         }
 
-        Ok(&self.buffer[self.pos - len..self.pos])
+        // Because we want to read behind us, being at zero means we're at the end
+        let pos = if self.pos == 0 {
+            self.buffer.len()
+        } else {
+            self.pos
+        };
+
+        Ok(&self.buffer[pos - len..pos])
     }
 }
 
@@ -319,5 +328,18 @@ mod tests {
             window.past_view(1 << 15 + 1),
             Err(DecodeFailed::ChunkTooLong)
         );
+    }
+
+    #[test]
+    fn check_past_view_new_max_size() {
+        let mut window = WindowSize::KB32.create_buffer();
+        assert!(matches!(window.past_view(1 << 15), Ok(_)));
+    }
+
+    #[test]
+    fn check_past_view_shifted_max_size() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.pos = 123;
+        assert!(matches!(window.past_view(1 << 15), Ok(_)));
     }
 }
