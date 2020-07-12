@@ -176,7 +176,36 @@ mod tests {
         window.copy_from_self(3, 2);
         assert_eq!(&window.buffer[..5], &[1, 2, 3, 1, 2]);
         assert!(window.buffer[5..].iter().all(|&x| x == 0));
-        // TODO test at end of window
+    }
+
+    #[test]
+    fn check_copy_at_boundary_from_self() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.buffer[window.buffer.len() - 3] = 1;
+        window.buffer[window.buffer.len() - 2] = 2;
+        window.pos = window.buffer.len() - 1;
+        window.copy_from_self(2, 2);
+        assert_eq!(window.buffer[0], 2);
+        assert_eq!(&window.buffer[window.buffer.len() - 3..], &[1, 2, 1]);
+        assert!(window.buffer[1..window.buffer.len() - 3]
+            .iter()
+            .all(|&x| x == 0));
+    }
+
+    #[test]
+    fn check_copy_from_self_at_boundary() {
+        let mut window = WindowSize::KB32.create_buffer();
+        window.buffer[window.buffer.len() - 2] = 1;
+        window.buffer[window.buffer.len() - 1] = 2;
+        window.buffer[0] = 3;
+        window.buffer[1] = 4;
+        window.pos = 2;
+        window.copy_from_self(4, 3);
+        assert_eq!(&window.buffer[..5], &[3, 4, 1, 2, 3]);
+        assert_eq!(&window.buffer[window.buffer.len() - 2..], &[1, 2]);
+        assert!(window.buffer[5..window.buffer.len() - 2]
+            .iter()
+            .all(|&x| x == 0));
     }
 
     #[test]
