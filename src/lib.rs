@@ -99,6 +99,11 @@ pub enum DecodeFailed {
 
     /// An invalid pretree element was found.
     InvalidPretreeElement(u16),
+
+    /// Tried to read a chunk longer than [`MAX_CHUNK_SIZE`].
+    ///
+    /// [`MAX_CHUNK_SIZE`]: constant.MAX_CHUNK_SIZE.html
+    ChunkTooLong,
 }
 
 impl fmt::Display for DecodeFailed {
@@ -114,6 +119,11 @@ impl fmt::Display for DecodeFailed {
             UnexpectedEof => write!(f, "reached end of chunk without fully decoding it"),
             InvalidBlock(kind) => write!(f, "block type {} is invalid", kind),
             InvalidPretreeElement(elem) => write!(f, "found invalid pretree element {}", elem),
+            ChunkTooLong => write!(
+                f,
+                "tried reading a chunk longer than {} bytes",
+                MAX_CHUNK_SIZE
+            ),
         }
     }
 }
@@ -256,7 +266,7 @@ impl Lzxd {
         // TODO last chunk may misalign this and on the next iteration we wouldn't be able
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
-        return Ok(&self.window.past_view(decoded_len));
+        self.window.past_view(decoded_len)
     }
 }
 

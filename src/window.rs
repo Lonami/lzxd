@@ -5,7 +5,7 @@
 /// than or equal to the sum of the size of the reference data rounded up to a multiple of
 /// 32_768 and the size of the subject data. However, some implementations also seem to support
 /// a window size of less than 2^17, and this one is no exception.
-use crate::{Bitstream, DecodeFailed};
+use crate::{Bitstream, DecodeFailed, MAX_CHUNK_SIZE};
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +68,10 @@ impl WindowSize {
     }
 
     pub(crate) fn create_buffer(&self) -> Window {
+        // The window must be at least as big as the smallest chunk, or else we can't possibly
+        // contain an entire chunk inside of the sliding window.
+        assert!(self.value() >= MAX_CHUNK_SIZE);
+
         Window {
             pos: 0,
             buffer: vec![0; self.value()].into_boxed_slice(),
@@ -104,7 +108,11 @@ impl Window {
         Ok(())
     }
 
-    pub fn past_view(&self, len: usize) -> &[u8] {
-        &self.buffer[self.pos - len..self.pos]
+    pub fn past_view(&self, len: usize) -> Result<&[u8], DecodeFailed> {
+        if len < MAX_CHUNK_SIZE {
+            Ok(&self.buffer[self.pos - len..self.pos])
+        } else {
+            Err(DecodeFailed::ChunkTooLong)
+        }
     }
 }
