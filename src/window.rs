@@ -72,6 +72,9 @@ impl WindowSize {
         // contain an entire chunk inside of the sliding window.
         assert!(self.value() >= MAX_CHUNK_SIZE);
 
+        // We can use bit operations if we rely on this assumption so make sure it holds.
+        assert!(self.value().is_power_of_two());
+
         Window {
             pos: 0,
             buffer: vec![0; self.value()].into_boxed_slice(),
@@ -93,12 +96,25 @@ impl Window {
     }
 
     pub fn copy_from_self(&mut self, offset: usize, length: usize) {
-        // TODO this can be improved by avoiding %
-        for i in 0..length {
-            let li = (self.pos + i) % self.buffer.len();
-            let ri = (self.buffer.len() + self.pos + i - offset) % self.buffer.len();
-            self.buffer[li] = self.buffer[ri];
+        if self.pos + length < self.buffer.len() && offset <= self.pos {
+            // Best case: neither source or destination wrap around
+            let start = self.pos - offset;
+            self.buffer.copy_within(start..start + length, self.pos);
+        } else {
+            // Either source or destination wrap around. We could expand this case into three
+            // (one for only source wrapping, one for only destination wrapping, one for both)
+            // but it's not really worth the effort.
+            //
+            // We could work out the ranges for use in `copy_within` but this is a lot simpler.
+            let mask = self.buffer.len() - 1; // relying on power of two assumption
+
+            for i in 0..length {
+                let dst = (self.pos + i) & mask;
+                let src = (self.buffer.len() + self.pos + i - offset) & mask;
+                self.buffer[dst] = self.buffer[src];
+            }
         }
+
         self.advance(length);
     }
 
