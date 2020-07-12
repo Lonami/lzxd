@@ -85,6 +85,7 @@ pub struct Lzxd {
     current_block: Block,
 }
 
+/// The error type used when decompression fails.
 #[derive(Debug, PartialEq)]
 pub enum DecodeFailed {
     /// The chunk length must be divisible by 2.
@@ -119,6 +120,8 @@ impl fmt::Display for DecodeFailed {
         }
     }
 }
+
+impl std::error::Error for DecodeFailed {}
 
 impl Lzxd {
     /// Creates a new instance of the LZXD decoder state. The [`WindowSize`] must be obtained
