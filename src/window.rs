@@ -80,12 +80,16 @@ impl WindowSize {
 }
 
 impl Window {
+    fn advance(&mut self, delta: usize) {
+        self.pos += delta;
+        if self.pos >= self.buffer.len() {
+            self.pos -= self.buffer.len();
+        }
+    }
+
     pub fn push(&mut self, value: u8) {
         self.buffer[self.pos] = value;
-        self.pos += 1;
-        if self.pos == self.buffer.len() {
-            self.pos = 0;
-        }
+        self.advance(1);
     }
 
     pub fn copy_from_self(&mut self, offset: usize, length: usize) {
@@ -95,7 +99,7 @@ impl Window {
             let ri = (self.buffer.len() + self.pos + i - offset) % self.buffer.len();
             self.buffer[li] = self.buffer[ri];
         }
-        self.pos += length;
+        self.advance(length);
     }
 
     pub fn copy_from_bitstream(
@@ -103,8 +107,9 @@ impl Window {
         bitstream: &mut Bitstream,
         length: usize,
     ) -> Result<(), DecodeFailed> {
+        // TODO test reading at boundary
         bitstream.read_raw(&mut self.buffer[self.pos..self.pos + length])?;
-        self.pos += length;
+        self.advance(length);
         Ok(())
     }
 
