@@ -121,11 +121,19 @@ impl Window {
     pub fn copy_from_bitstream(
         &mut self,
         bitstream: &mut Bitstream,
-        length: usize,
+        len: usize,
     ) -> Result<(), DecodeFailed> {
-        // TODO test reading at boundary
-        bitstream.read_raw(&mut self.buffer[self.pos..self.pos + length])?;
-        self.advance(length);
+        if self.pos + len > self.buffer.len() {
+            let shift = self.pos + len - self.buffer.len();
+            self.pos -= shift;
+
+            // No need to actually save the part we're about to overwrite because when reading
+            // with the bitstream we would also overwrite it anyway.
+            self.buffer.copy_within(shift.., 0);
+        }
+
+        bitstream.read_raw(&mut self.buffer[self.pos..self.pos + len])?;
+        self.advance(len);
         Ok(())
     }
 
@@ -194,6 +202,8 @@ mod tests {
         assert!(window.buffer[5..].iter().all(|&x| x == 0));
     }
 
+    // TODO checks that end exactly at boundary and assert pos is 0
+
     #[test]
     fn check_copy_at_boundary_from_self() {
         let mut window = WindowSize::KB32.create_buffer();
@@ -220,6 +230,29 @@ mod tests {
         assert_eq!(&window.buffer[..5], &[3, 4, 1, 2, 3]);
         assert_eq!(&window.buffer[window.buffer.len() - 2..], &[1, 2]);
         assert!(window.buffer[5..window.buffer.len() - 2]
+            .iter()
+            .all(|&x| x == 0));
+    }
+
+    #[test]
+    fn check_bitstream() {
+        let buffer = [1, 2, 3, 4];
+        let mut bitstream = Bitstream::new(&buffer);
+        let mut window = WindowSize::KB32.create_buffer();
+        window.copy_from_bitstream(&mut bitstream, 4).unwrap();
+        assert_eq!(&window.buffer[..4], &[1, 2, 3, 4]);
+        assert!(window.buffer[4..].iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn check_bitstream_at_boundary() {
+        let buffer = [1, 2, 3, 4];
+        let mut bitstream = Bitstream::new(&buffer);
+        let mut window = WindowSize::KB32.create_buffer();
+        window.pos = window.buffer.len() - 2;
+        window.copy_from_bitstream(&mut bitstream, 4).unwrap();
+        assert_eq!(&window.buffer[window.buffer.len() - 4..], &[1, 2, 3, 4]);
+        assert!(window.buffer[..window.buffer.len() - 4]
             .iter()
             .all(|&x| x == 0));
     }
