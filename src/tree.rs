@@ -36,6 +36,9 @@ impl CanonicalTree {
     // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
     // > identical tree,
     pub fn create_instance(&self) -> Tree {
+        // The ideas implemented by this method are heavily inspired from LeonBlade's xnbcli
+        // on GitHub.
+        //
         // The path lengths contains the bit indices or zero if its not present, so find the
         // highest path length to determine how big our tree needs to be.
         let largest_length =

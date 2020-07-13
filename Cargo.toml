@@ -2,8 +2,15 @@
 name = "lzxd"
 version = "0.1.0"
 authors = ["Lonami Exo <totufals@hotmail.com>"]
+license = "MIT OR Apache-2.0"
+description = """
+Decompression implementation for Microsoft's LZXD compression format.
+"""
+homepage = "https://github.com/Lonami/lzxd"
+documentation = "https://docs.rs/lzxd"
+repository = "https://github.com/Lonami/lzxd"
+keywords = ["lzx", "lzxd", "xnb", "decompress"]
+categories = ["compression"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
