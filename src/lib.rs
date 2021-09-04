@@ -81,7 +81,7 @@ pub struct Lzxd {
     /// if the E8 Call Translation is not enabled for this stream.
     e8_translation_size: Option<u32>,
 
-    /// Temporary output buffer, used when E8 translation is enabled
+    /// Temporary output buffer, used when E8 translation is enabled.
     scratch_buffer: Vec<u8>,
 
     /// Current block.
