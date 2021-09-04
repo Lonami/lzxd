@@ -205,58 +205,51 @@ impl Lzxd {
         mut idata: &'a [u8],
         scratch: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DecodeFailed> {
-        if let Some(translation_size) = e8_translation_size {
-            // E8 fixups are disabled after 1GB of input data, or if the chunk size
-            // is too small.
-            if chunk_offset >= 0x4000_0000 || idata.len() <= 10 {
-                return Ok(idata);
+        let translation_size = match e8_translation_size {
+            // E8 fixups are disabled after 1GB of input data,
+            // or if the chunk size is too small.
+            Some(size) if chunk_offset < 0x4000_0000 && idata.len() > 10 => size,
+            _ => return Ok(idata),
+        };
+
+        // Copy the entire output buffer into a staging area so we can perform fixups.
+        // FIXME: Only really need to perform this copy if we modify the input buffer.
+        scratch.clear();
+        scratch.extend_from_slice(idata);
+
+        let mut processed = 0usize;
+        let mut odata = scratch.as_mut_slice();
+
+        // Find the next E8 match, or finish once there are no more E8 matches.
+        while let Some(pos) = idata.iter().position(|&e| e == 0xE8) {
+            // N.B: E8 fixups are only performed for up to 10 bytes before the end of a chunk.
+            if idata.len() - pos < 10 {
+                continue;
             }
 
-            // Copy the entire output buffer into a staging area so we can perform fixups.
-            // FIXME: Only really need to perform this copy if we modify the input buffer.
-            scratch.clear();
-            scratch.extend_from_slice(idata);
+            // This is the current file output pointer.
+            let current_pointer = chunk_offset + processed + pos;
 
-            let mut processed = 0usize;
-            let mut odata = scratch.as_mut_slice();
-            loop {
-                // Find the next E8 match.
-                if let Some(pos) = idata.iter().position(|&e| e == 0xE8) {
-                    // N.B: E8 fixups are only performed for up to 10 bytes before the end of a chunk.
-                    if idata.len() - pos < 10 {
-                        continue;
-                    }
+            // Match. Fix up the following bytes.
+            // N.B: 4-byte slice conversion to an array will not fail.
+            let abs_val = u32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
 
-                    // This is the current file output pointer.
-                    let current_pointer = chunk_offset + processed + pos;
-
-                    // Match. Fix up the following bytes.
-                    // N.B: 4-byte slice conversion to an array will not fail.
-                    let abs_val = u32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
-
-                    if (abs_val as usize) < current_pointer && (abs_val as u32) < translation_size {
-                        let rel_val = if (abs_val as i32).is_positive() {
-                            abs_val.wrapping_sub(current_pointer as u32) as i32
-                        } else {
-                            abs_val.wrapping_add(translation_size) as i32
-                        };
-
-                        odata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
-                    }
-
-                    processed += pos + 5;
-                    idata = &idata[pos + 5..];
-                    odata = &mut odata[pos + 5..];
+            if (abs_val as usize) < current_pointer && (abs_val as u32) < translation_size {
+                let rel_val = if (abs_val as i32).is_positive() {
+                    abs_val.wrapping_sub(current_pointer as u32) as i32
                 } else {
-                    // No more E8 matches.
-                    break;
-                }
+                    abs_val.wrapping_add(translation_size) as i32
+                };
+
+                odata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
             }
 
-            Ok(scratch)
-        } else {
-            Ok(idata)
+            processed += pos + 5;
+            idata = &idata[pos + 5..];
+            odata = &mut odata[pos + 5..];
         }
+
+        Ok(scratch)
     }
 
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
