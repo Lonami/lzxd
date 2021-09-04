@@ -20,7 +20,7 @@ mod window;
 
 pub(crate) use bitstream::Bitstream;
 pub(crate) use block::{Block, Decoded, Kind as BlockKind};
-use std::fmt;
+use std::{convert::TryInto, fmt};
 pub(crate) use tree::{CanonicalTree, Tree};
 use window::Window;
 pub use window::WindowSize;
@@ -71,12 +71,18 @@ pub struct Lzxd {
     /// > The three most recent real match offsets are kept in a list.
     r: [u32; 3],
 
+    /// The current offset into the decompressed data.
+    chunk_offset: usize,
+
     /// Has the very first chunk been read yet? Unlike the rest, it has additional data.
     first_chunk_read: bool,
 
     /// This field will update after the first chunk is read, but will remain being `None`
     /// if the E8 Call Translation is not enabled for this stream.
-    _e8_translation_size: Option<u32>,
+    e8_translation_size: Option<u32>,
+
+    /// Temporary output buffer, used when E8 translation is enabled
+    scratch_buffer: Vec<u8>,
 
     /// Current block.
     current_block: Block,
@@ -159,7 +165,9 @@ impl Lzxd {
             // > The initial state of R0, R1, R2 is (1, 1, 1).
             r: [1, 1, 1],
             first_chunk_read: false,
-            _e8_translation_size: None,
+            chunk_offset: 0,
+            e8_translation_size: None,
+            scratch_buffer: Vec::new(),
             // Start with some dummy value.
             current_block: Block {
                 size: 0,
@@ -178,21 +186,77 @@ impl Lzxd {
             self.first_chunk_read = true;
 
             let e8_translation = bitstream.read_bit()? != 0;
-            self._e8_translation_size = if e8_translation {
+            self.e8_translation_size = if e8_translation {
                 let high = bitstream.read_u16_le()? as u32;
                 let low = bitstream.read_u16_le()? as u32;
                 Some((high << 16) | low)
             } else {
                 None
             };
-
-            // We don't support e8 translation yet
-            if self._e8_translation_size.is_some() {
-                todo!("e8 translation not implemented");
-            }
         }
 
         Ok(())
+    }
+
+    /// Attempts to perform post-decompression E8 fixups on an output data buffer.
+    fn postprocess<'a>(
+        e8_translation_size: Option<u32>,
+        chunk_offset: usize,
+        mut idata: &'a [u8],
+        scratch: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DecodeFailed> {
+        if let Some(translation_size) = e8_translation_size {
+            // E8 fixups are disabled after 1GB of input data, or if the chunk size
+            // is too small.
+            if chunk_offset >= 0x4000_0000 || idata.len() <= 10 {
+                return Ok(idata);
+            }
+
+            // Copy the entire output buffer into a staging area so we can perform fixups.
+            // FIXME: Only really need to perform this copy if we modify the input buffer.
+            scratch.clear();
+            scratch.extend_from_slice(idata);
+
+            let mut processed = 0usize;
+            let mut odata = scratch.as_mut_slice();
+            loop {
+                // Find the next E8 match.
+                if let Some(pos) = idata.iter().position(|&e| e == 0xE8) {
+                    // N.B: E8 fixups are only performed for up to 10 bytes before the end of a chunk.
+                    if idata.len() - pos < 10 {
+                        continue;
+                    }
+
+                    // This is the current file output pointer.
+                    let current_pointer = chunk_offset + processed + pos;
+
+                    // Match. Fix up the following bytes.
+                    // N.B: 4-byte slice conversion to an array will not fail.
+                    let abs_val = u32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
+
+                    if (abs_val as usize) < current_pointer && (abs_val as u32) < translation_size {
+                        let rel_val = if (abs_val as i32).is_positive() {
+                            abs_val.wrapping_sub(current_pointer as u32) as i32
+                        } else {
+                            abs_val.wrapping_add(translation_size) as i32
+                        };
+
+                        odata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
+                    }
+
+                    processed += pos + 5;
+                    idata = &idata[pos + 5..];
+                    odata = &mut odata[pos + 5..];
+                } else {
+                    // No more E8 matches.
+                    break;
+                }
+            }
+
+            Ok(scratch)
+        } else {
+            Ok(idata)
+        }
     }
 
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
@@ -266,7 +330,17 @@ impl Lzxd {
         // TODO last chunk may misalign this and on the next iteration we wouldn't be able
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
-        self.window.past_view(decoded_len)
+        
+        // Finally, postprocess the output buffer (if necessary).
+        let res = Self::postprocess(
+            self.e8_translation_size,
+            self.chunk_offset,
+            self.window.past_view(decoded_len)?,
+            &mut self.scratch_buffer,
+        );
+
+        self.chunk_offset += decoded_len;
+        res
     }
 }
 
@@ -278,11 +352,40 @@ mod tests {
     fn check_uncompressed() {
         let data = [
             0x00, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
-            0x00, 0x00, 0x61, 0x62, 0x63, 0x00,
+            0x00, 0x00, b'a', b'b', b'c', 0x00,
         ];
 
         let mut lzxd = Lzxd::new(WindowSize::KB32); // size does not matter
         let res = lzxd.decompress_next(&data);
         assert_eq!(res.unwrap(), [b'a', b'b', b'c']);
+    }
+
+    #[test]
+    fn check_e8() {
+        let data = [
+            0x5B, 0x80, 0x80, 0x8D, 0x00, 0x30, 0x80, 0x0A, 0x18, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x54, 0x68, 0x69, 0x73, 0x20, 0x66, 0x69, 0x6C,
+            0x65, 0x20, 0x68, 0x61, 0x73, 0x20, 0x61, 0x6E, 0x20, 0x45, 0x38, 0x20, 0x62, 0x79,
+            0x74, 0x65, 0x20, 0x74, 0x6F, 0x20, 0x74, 0x65, 0x73, 0x74, 0x20, 0x45, 0x38, 0x20,
+            0x74, 0x72, 0x61, 0x6E, 0x73, 0x6C, 0x61, 0x74, 0x69, 0x6F, 0x6E, 0x2C, 0x20, 0x58,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64, 0xE8, 0x7B,
+            0x00, 0x00, 0x00, 0xE8, 0x7B, 0x00, 0x00, 0x00, 0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+            0x64, 0x64, 0x64, 0x64, 0x64, 0x64,
+        ];
+
+        let mut lzxd = Lzxd::new(WindowSize::KB32);
+        let res = lzxd.decompress_next(&data);
+        assert_eq!(
+            res.unwrap(),
+            b"This file has an E8 byte to test E8 translation, Xdddddddddddddddd\
+              dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\
+              dddddddddddddd\xE8\xE9\xFF\xFF\xFF\xE8\xE4\xFF\xFF\xFFdddddddddddd"
+        );
     }
 }
