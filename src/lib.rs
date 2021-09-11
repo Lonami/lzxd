@@ -323,7 +323,7 @@ impl Lzxd {
         // TODO last chunk may misalign this and on the next iteration we wouldn't be able
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
-        
+
         // Finally, postprocess the output buffer (if necessary).
         let res = Self::postprocess(
             self.e8_translation_size,
