@@ -224,7 +224,7 @@ impl Lzxd {
         while let Some(pos) = idata.iter().position(|&e| e == 0xE8) {
             // N.B: E8 fixups are only performed for up to 10 bytes before the end of a chunk.
             if idata.len() - pos < 10 {
-                continue;
+                break;
             }
 
             // This is the current file output pointer.
