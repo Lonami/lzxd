@@ -154,6 +154,7 @@ fn decode_element(
             length_header + 2 // no length footer
                               // Decoding a match length (if a match length < 257).
         };
+        assert!(match_length != 0);
 
         let position_slot = (main_element - 256) >> 3;
 
@@ -257,14 +258,17 @@ impl Block {
         // > field.
         let kind = bitstream.read_bits(3)? as u8;
         let size = bitstream.read_u24_be()?;
+        if size == 0 {
+            return Err(DecodeFailed::InvalidBlockSize(size));
+        }
 
         let kind = match kind {
             0b001 => {
                 read_main_and_length_trees(bitstream, state)?;
 
                 Kind::Verbatim {
-                    main_tree: state.main_tree.create_instance(),
-                    length_tree: state.length_tree.create_instance(),
+                    main_tree: state.main_tree.create_instance()?,
+                    length_tree: state.length_tree.create_instance()?,
                 }
             }
             0b010 => {
@@ -277,7 +281,7 @@ impl Block {
                         path_lengths.push(bitstream.read_bits(3)? as u8);
                     }
 
-                    Tree::from_path_lengths(path_lengths)
+                    Tree::from_path_lengths(path_lengths)?
                 };
 
                 // > An aligned offset block is identical to the verbatim block except for the
@@ -286,8 +290,8 @@ impl Block {
 
                 Kind::AlignedOffset {
                     aligned_offset_tree,
-                    main_tree: state.main_tree.create_instance(),
-                    length_tree: state.length_tree.create_instance(),
+                    main_tree: state.main_tree.create_instance()?,
+                    length_tree: state.length_tree.create_instance()?,
                 }
             }
             0b011 => {

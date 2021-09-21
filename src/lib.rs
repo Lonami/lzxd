@@ -103,8 +103,21 @@ pub enum DecodeFailed {
     /// An invalid block type was found.
     InvalidBlock(u8),
 
+    /// An invalid block size was found.
+    InvalidBlockSize(u32),
+
     /// An invalid pretree element was found.
     InvalidPretreeElement(u16),
+
+    /// Invalid pretree run-length encoding.
+    // TODO: Better name?
+    InvalidPretreeRLE,
+
+    /// When attempting to construct a decode tree, we encountered an invalid path length tree.
+    InvalidPathLengths,
+
+    /// The given window size was too small.
+    WindowTooSmall,
 
     /// Tried to read a chunk longer than [`MAX_CHUNK_SIZE`].
     ///
@@ -124,7 +137,11 @@ impl fmt::Display for DecodeFailed {
             ),
             UnexpectedEof => write!(f, "reached end of chunk without fully decoding it"),
             InvalidBlock(kind) => write!(f, "block type {} is invalid", kind),
+            InvalidBlockSize(size) => write!(f, "block size {} is invalid", size),
             InvalidPretreeElement(elem) => write!(f, "found invalid pretree element {}", elem),
+            InvalidPretreeRLE => write!(f, "found invalid pretree rle element"),
+            InvalidPathLengths => write!(f, "encountered invalid path lengths"),
+            WindowTooSmall => write!(f, "decode window was too small"),
             ChunkTooLong => write!(
                 f,
                 "tried reading a chunk longer than {} bytes",
@@ -278,6 +295,7 @@ impl Lzxd {
         while !bitstream.is_empty() {
             if self.current_block.size == 0 {
                 self.current_block = Block::read(&mut bitstream, &mut self.state)?;
+                assert!(self.current_block.size != 0);
             }
 
             let decoded = self
@@ -299,7 +317,8 @@ impl Lzxd {
                     length
                 }
             };
-
+            
+            assert!(advance != 0);
             decoded_len += advance;
             if let Some(value) = self.current_block.size.checked_sub(advance as u32) {
                 self.current_block.size = value;

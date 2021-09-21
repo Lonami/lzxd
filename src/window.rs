@@ -128,6 +128,10 @@ impl Window {
         bitstream: &mut Bitstream,
         len: usize,
     ) -> Result<(), DecodeFailed> {
+        if len > self.buffer.len() {
+            return Err(DecodeFailed::WindowTooSmall);
+        }
+
         if self.pos + len > self.buffer.len() {
             let shift = self.pos + len - self.buffer.len();
             self.pos -= shift;
