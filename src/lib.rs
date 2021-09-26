@@ -110,8 +110,7 @@ pub enum DecodeFailed {
     InvalidPretreeElement(u16),
 
     /// Invalid pretree run-length encoding.
-    // TODO: Better name?
-    InvalidPretreeRLE,
+    InvalidPretreeRle,
 
     /// When attempting to construct a decode tree, we encountered an invalid path length tree.
     InvalidPathLengths,
@@ -139,7 +138,7 @@ impl fmt::Display for DecodeFailed {
             InvalidBlock(kind) => write!(f, "block type {} is invalid", kind),
             InvalidBlockSize(size) => write!(f, "block size {} is invalid", size),
             InvalidPretreeElement(elem) => write!(f, "found invalid pretree element {}", elem),
-            InvalidPretreeRLE => write!(f, "found invalid pretree rle element"),
+            InvalidPretreeRle => write!(f, "found invalid pretree rle element"),
             InvalidPathLengths => write!(f, "encountered invalid path lengths"),
             WindowTooSmall => write!(f, "decode window was too small"),
             ChunkTooLong => write!(

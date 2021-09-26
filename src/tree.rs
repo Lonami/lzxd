@@ -127,7 +127,7 @@ impl CanonicalTree {
                     let zeros = bitstream.read_bits(4)?;
                     self.path_lengths
                         .get_mut(i..i + zeros as usize + 4)
-                        .ok_or(DecodeFailed::InvalidPretreeRLE)?
+                        .ok_or(DecodeFailed::InvalidPretreeRle)?
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 4;
@@ -136,7 +136,7 @@ impl CanonicalTree {
                     let zeros = bitstream.read_bits(5)?;
                     self.path_lengths
                         .get_mut(i..i + zeros as usize + 20)
-                        .ok_or(DecodeFailed::InvalidPretreeRLE)?
+                        .ok_or(DecodeFailed::InvalidPretreeRle)?
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 20;
@@ -153,7 +153,7 @@ impl CanonicalTree {
                     let value = (17 + self.path_lengths[i] - code as u8) % 17;
                     self.path_lengths
                         .get_mut(i..i + same as usize + 4)
-                        .ok_or(DecodeFailed::InvalidPretreeRLE)?
+                        .ok_or(DecodeFailed::InvalidPretreeRle)?
                         .iter_mut()
                         .for_each(|x| *x = value);
                     i += same as usize + 4;
