@@ -35,7 +35,7 @@ impl CanonicalTree {
     /// be used to better decode elements.
     // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
     // > identical tree,
-    pub fn create_instance(&self) -> Tree {
+    pub fn create_instance(&self) -> Result<Tree, DecodeFailed> {
         // The ideas implemented by this method are heavily inspired from LeonBlade's xnbcli
         // on GitHub.
         //
@@ -43,7 +43,7 @@ impl CanonicalTree {
         // highest path length to determine how big our tree needs to be.
         let largest_length =
             NonZeroU8::new(*self.path_lengths.iter().max().expect("empty path lengths"))
-                .expect("all path lengths were 0");
+                .ok_or(DecodeFailed::InvalidPathLengths)?;
         let mut huffman_tree = vec![0; 1 << largest_length.get()];
 
         // > a zero path length indicates that the element has a zero frequency and is not
@@ -61,7 +61,9 @@ impl CanonicalTree {
                 // As soon as a code's path length matches with our bit index write the code as
                 // many times as the bit index itself represents.
                 if self.path_lengths[code] == bit {
-                    huffman_tree[pos..pos + amount]
+                    huffman_tree
+                        .get_mut(pos..pos + amount)
+                        .ok_or(DecodeFailed::InvalidPathLengths)?
                         .iter_mut()
                         .for_each(|x| *x = code as u16);
 
@@ -71,13 +73,15 @@ impl CanonicalTree {
         }
 
         // If we didn't fill the entire table, the path lengths were wrong.
-        assert_eq!(pos, huffman_tree.len());
+        if pos != huffman_tree.len() {
+            Err(DecodeFailed::InvalidPathLengths)?;
+        }
 
-        Tree {
+        Ok(Tree {
             path_lengths: self.path_lengths.clone(),
             largest_length,
             huffman_tree,
-        }
+        })
     }
 
     // Note: the tree already exists and is used to apply the deltas.
@@ -99,7 +103,7 @@ impl CanonicalTree {
                 path_lengths.push(bitstream.read_bits(4)? as u8)
             }
 
-            Tree::from_path_lengths(path_lengths)
+            Tree::from_path_lengths(path_lengths)?
         };
 
         // > Tree elements are output in sequential order starting with the first element.
@@ -121,14 +125,18 @@ impl CanonicalTree {
                 // > same path length.
                 17 => {
                     let zeros = bitstream.read_bits(4)?;
-                    self.path_lengths[i..i + zeros as usize + 4]
+                    self.path_lengths
+                        .get_mut(i..i + zeros as usize + 4)
+                        .ok_or(DecodeFailed::InvalidPretreeRle)?
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 4;
                 }
                 18 => {
                     let zeros = bitstream.read_bits(5)?;
-                    self.path_lengths[i..i + zeros as usize + 20]
+                    self.path_lengths
+                        .get_mut(i..i + zeros as usize + 20)
+                        .ok_or(DecodeFailed::InvalidPretreeRle)?
                         .iter_mut()
                         .for_each(|x| *x = 0);
                     i += zeros as usize + 20;
@@ -137,9 +145,15 @@ impl CanonicalTree {
                     let same = bitstream.read_bits(1)?;
                     // "Decode new code" is used to parse the next code from the bitstream, which
                     // has a value range of [0, 16].
-                    let code = pretree.decode_element(bitstream)? as u8;
-                    let value = (17 + self.path_lengths[i] - code) % 17;
-                    self.path_lengths[i..i + same as usize + 4]
+                    let code = pretree.decode_element(bitstream)?;
+                    if code > 16 {
+                        return Err(DecodeFailed::InvalidPretreeElement(code))?;
+                    }
+
+                    let value = (17 + self.path_lengths[i] - code as u8) % 17;
+                    self.path_lengths
+                        .get_mut(i..i + same as usize + 4)
+                        .ok_or(DecodeFailed::InvalidPretreeRle)?
                         .iter_mut()
                         .for_each(|x| *x = value);
                     i += same as usize + 4;
@@ -154,7 +168,7 @@ impl CanonicalTree {
 
 impl Tree {
     /// Create a new usable tree instance directly from known path lengths.
-    pub fn from_path_lengths(path_lengths: Vec<u8>) -> Self {
+    pub fn from_path_lengths(path_lengths: Vec<u8>) -> Result<Self, DecodeFailed> {
         CanonicalTree { path_lengths }.create_instance()
     }
 
@@ -185,7 +199,7 @@ mod tests {
     #[test]
     fn decode_simple_table() {
         // Based on some aligned offset tree
-        let tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
+        let tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]).unwrap();
         let value_count = vec![(2, 32), (6, 16), (3, 8), (4, 4), (1, 2), (0, 1), (5, 1)];
 
         let mut i = 0;
@@ -202,7 +216,8 @@ mod tests {
         // Based on the pretree of some length tree
         let tree = Tree::from_path_lengths(vec![
             1, 0, 0, 0, 0, 7, 3, 3, 4, 4, 5, 5, 5, 7, 8, 8, 0, 7, 0, 0,
-        ]);
+        ])
+        .unwrap();
         let value_count = vec![
             (0, 128),
             (6, 32),
@@ -230,7 +245,7 @@ mod tests {
 
     #[test]
     fn decode_elements() {
-        let tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]);
+        let tree = Tree::from_path_lengths(vec![6, 5, 1, 3, 4, 6, 2, 0]).unwrap();
 
         let buffer = [0x5b, 0xda, 0x3f, 0xf8];
         let mut bitstream = Bitstream::new(&buffer);

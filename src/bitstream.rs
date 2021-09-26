@@ -56,7 +56,8 @@ impl<'a> Bitstream<'a> {
         Ok(self.n & 1)
     }
 
-    pub fn read_bits(&mut self, bits: u8) -> Result<u16, DecodeFailed> {
+    /// Read from the bistream, no more than 16 bits (one word).
+    fn read_bits_oneword(&mut self, bits: u8) -> Result<u16, DecodeFailed> {
         assert!(bits <= 16);
         debug_assert!(self.remaining <= 16);
 
@@ -79,7 +80,22 @@ impl<'a> Bitstream<'a> {
         })
     }
 
-    pub fn peek_bits(&self, bits: u8) -> u16 {
+    pub fn read_bits(&mut self, bits: u8) -> Result<u32, DecodeFailed> {
+        if bits <= 16 {
+            self.read_bits_oneword(bits).map(|w| w as u32)
+        } else {
+            assert!(bits <= 32);
+
+            // Read the two words.
+            let w0 = self.read_bits_oneword(16)? as u32;
+            let w1 = self.read_bits_oneword(bits - 16)? as u32;
+
+            Ok((w1 << 16) | w0)
+        }
+    }
+
+    /// Peek from the bitstream, no more than 16 bits (one word).
+    fn peek_bits_oneword(&self, bits: u8) -> u16 {
         // Copy paste of `read_bits`, but without advancing the buffer.
         assert!(bits <= 16);
 
@@ -103,8 +119,22 @@ impl<'a> Bitstream<'a> {
         }
     }
 
+    pub fn peek_bits(&self, bits: u8) -> u32 {
+        if bits <= 16 {
+            self.peek_bits_oneword(bits) as u32
+        } else {
+            assert!(bits <= 32);
+
+            // Read the two words.
+            let lo = self.peek_bits_oneword(16) as u32;
+            let hi = self.peek_bits_oneword(bits - 16) as u32;
+
+            (hi << 16) | lo
+        }
+    }
+
     pub fn read_u16_le(&mut self) -> Result<u16, DecodeFailed> {
-        Ok(self.read_bits(16)?.swap_bytes())
+        Ok(self.read_bits_oneword(16)?.swap_bytes())
     }
 
     pub fn read_u32_le(&mut self) -> Result<u32, DecodeFailed> {
@@ -177,7 +207,7 @@ mod tests {
             .copied()
             .enumerate()
             .for_each(|(value, bit_length)| {
-                assert_eq!(bitstream.read_bits(bit_length), Ok(value as u16));
+                assert_eq!(bitstream.read_bits(bit_length), Ok(value as u32));
             });
     }
 
@@ -272,6 +302,6 @@ mod tests {
         let mut bitstream_1 = Bitstream::new(&bytes);
         let mut bitstream_n = Bitstream::new(&bytes);
 
-        (0..16).for_each(|_| assert_eq!(bitstream_1.read_bit(), bitstream_n.read_bits(1)));
+        (0..16).for_each(|_| assert_eq!(bitstream_1.read_bit().map(|b| b as u32), bitstream_n.read_bits(1)));
     }
 }
