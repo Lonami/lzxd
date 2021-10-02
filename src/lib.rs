@@ -81,9 +81,6 @@ pub struct Lzxd {
     /// if the E8 Call Translation is not enabled for this stream.
     e8_translation_size: Option<u32>,
 
-    /// Temporary output buffer, used when E8 translation is enabled.
-    scratch_buffer: Vec<u8>,
-
     /// Current block.
     current_block: Block,
 }
@@ -183,7 +180,6 @@ impl Lzxd {
             first_chunk_read: false,
             chunk_offset: 0,
             e8_translation_size: None,
-            scratch_buffer: Vec::new(),
             // Start with some dummy value.
             current_block: Block {
                 size: 0,
@@ -218,8 +214,7 @@ impl Lzxd {
     fn postprocess<'a>(
         e8_translation_size: Option<u32>,
         chunk_offset: usize,
-        mut idata: &'a [u8],
-        scratch: &'a mut Vec<u8>,
+        idata: &'a mut [u8],
     ) -> Result<&'a [u8], DecodeFailed> {
         let translation_size = match e8_translation_size {
             // E8 fixups are disabled after 1GB of input data,
@@ -228,23 +223,21 @@ impl Lzxd {
             _ => return Ok(idata),
         };
 
-        // Copy the entire output buffer into a staging area so we can perform fixups.
-        // FIXME: Only really need to perform this copy if we modify the input buffer.
-        scratch.clear();
-        scratch.extend_from_slice(idata);
-
         let mut processed = 0usize;
-        let mut odata = scratch.as_mut_slice();
 
         // Find the next E8 match, or finish once there are no more E8 matches.
-        while let Some(pos) = idata.iter().position(|&e| e == 0xE8) {
+        while let Some(pos) = idata[processed..]
+            .iter()
+            .position(|&e| e == 0xE8)
+            .map(|pos| processed + pos)
+        {
             // N.B: E8 fixups are only performed for up to 10 bytes before the end of a chunk.
             if idata.len() - pos < 10 {
                 break;
             }
 
             // This is the current file output pointer.
-            let current_pointer = chunk_offset + processed + pos;
+            let current_pointer = chunk_offset + pos;
 
             // Match. Fix up the following bytes.
             // N.B: 4-byte slice conversion to an array will not fail.
@@ -257,15 +250,13 @@ impl Lzxd {
                     abs_val.wrapping_add(translation_size) as i32
                 };
 
-                odata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
+                idata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
             }
 
-            processed += pos + 5;
-            idata = &idata[pos + 5..];
-            odata = &mut odata[pos + 5..];
+            processed = pos + 5;
         }
 
-        Ok(scratch)
+        Ok(idata)
     }
 
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
@@ -347,7 +338,6 @@ impl Lzxd {
             self.e8_translation_size,
             self.chunk_offset,
             self.window.past_view(decoded_len)?,
-            &mut self.scratch_buffer,
         );
 
         self.chunk_offset += decoded_len;

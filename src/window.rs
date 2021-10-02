@@ -146,7 +146,7 @@ impl Window {
         Ok(())
     }
 
-    pub fn past_view(&mut self, len: usize) -> Result<&[u8], DecodeFailed> {
+    pub fn past_view(&mut self, len: usize) -> Result<&mut [u8], DecodeFailed> {
         if len > MAX_CHUNK_SIZE {
             return Err(DecodeFailed::ChunkTooLong);
         }
@@ -173,7 +173,7 @@ impl Window {
             self.pos
         };
 
-        Ok(&self.buffer[pos - len..pos])
+        Ok(&mut self.buffer[pos - len..pos])
     }
 }
 
