@@ -307,7 +307,7 @@ impl Lzxd {
                     length
                 }
             };
-            
+
             assert!(advance != 0);
             decoded_len += advance;
             if let Some(value) = self.current_block.size.checked_sub(advance as u32) {
@@ -332,6 +332,13 @@ impl Lzxd {
         // TODO last chunk may misalign this and on the next iteration we wouldn't be able
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
+
+        // Align the window up to 32KB.
+        // See https://github.com/Lonami/lzxd/issues/7 for details.
+        if let Some(len) = 0x8000usize.checked_sub(decoded_len) {
+            self.window.zero_extend(len);
+            decoded_len += len;
+        }
 
         // Finally, postprocess the output buffer (if necessary).
         let res = Self::postprocess(
