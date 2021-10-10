@@ -333,11 +333,14 @@ impl Lzxd {
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
 
-        // Align the window up to 32KB.
-        // See https://github.com/Lonami/lzxd/issues/7 for details.
-        if let Some(len) = 0x8000usize.checked_sub(decoded_len) {
-            self.window.zero_extend(len);
-            decoded_len += len;
+        // FIXME: Why is the last block's size observed to be one?
+        if self.current_block.size > 1 {
+            // Align the window up to 32KB.
+            // See https://github.com/Lonami/lzxd/issues/7 for details.
+            if let Some(len) = 0x8000usize.checked_sub(decoded_len) {
+                self.window.zero_extend(len);
+                decoded_len += len;
+            }
         }
 
         // Finally, postprocess the output buffer (if necessary).

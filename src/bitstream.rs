@@ -302,6 +302,11 @@ mod tests {
         let mut bitstream_1 = Bitstream::new(&bytes);
         let mut bitstream_n = Bitstream::new(&bytes);
 
-        (0..16).for_each(|_| assert_eq!(bitstream_1.read_bit().map(|b| b as u32), bitstream_n.read_bits(1)));
+        (0..16).for_each(|_| {
+            assert_eq!(
+                bitstream_1.read_bit().map(|b| b as u32),
+                bitstream_n.read_bits(1)
+            )
+        });
     }
 }
