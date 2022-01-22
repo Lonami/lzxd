@@ -185,6 +185,11 @@ impl<'a> Bitstream<'a> {
         self.buffer = &self.buffer[real_len..];
         Ok(())
     }
+
+    pub fn remaining_bytes(&self) -> usize
+    {
+        self.buffer.len()
+    }
 }
 
 #[cfg(test)]

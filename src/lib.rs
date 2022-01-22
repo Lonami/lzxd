@@ -302,6 +302,8 @@ impl Lzxd {
                     length
                 }
                 Decoded::Read(length) => {
+                    //Read up to end of chunk, allows intra-chunk blocks
+                    let length = usize::min(bitstream.remaining_bytes(), length);
                     // Will re-align if needed, just as decompressed reads mandate.
                     self.window.copy_from_bitstream(&mut bitstream, length)?;
                     length
