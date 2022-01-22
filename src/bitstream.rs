@@ -186,8 +186,7 @@ impl<'a> Bitstream<'a> {
         Ok(())
     }
 
-    pub fn remaining_bytes(&self) -> usize
-    {
+    pub fn remaining_bytes(&self) -> usize {
         self.buffer.len()
     }
 }
