@@ -126,8 +126,13 @@ impl<'a> Bitstream<'a> {
             assert!(bits <= 32);
 
             // Read the two words.
-            let lo = self.peek_bits_oneword(16) as u32;
-            let hi = self.peek_bits_oneword(bits - 16) as u32;
+            let mut advanced_stream = Self {
+                buffer: self.buffer,
+                n: self.n,
+                remaining: self.remaining,
+            };
+            let lo = advanced_stream.read_bits_oneword(16).unwrap() as u32;
+            let hi = advanced_stream.peek_bits_oneword(bits - 16) as u32;
 
             (hi << 16) | lo
         }
