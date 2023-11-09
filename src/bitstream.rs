@@ -369,4 +369,27 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn read_equals_peek() {
+        for index in 0..20 {
+            let n =
+                (0b11_0_111_0_11111_0_1111111_0_11111111111_0_1111111111111u64).rotate_left(index);
+
+            let bytes = n.to_be_bytes();
+            for offset in 0..20 {
+                for size in 0..20 {
+                    let mut bitstream = Bitstream::new(&bytes);
+                    bitstream.read_bits(offset).unwrap();
+
+                    let peeked = bitstream.peek_bits(size);
+                    assert_eq!(
+                        bitstream.read_bits(size),
+                        Ok(peeked),
+                        "offset={offset}, size={size}, bytes={n:032b}",
+                    );
+                }
+            }
+        }
+    }
 }
