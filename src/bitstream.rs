@@ -313,4 +313,60 @@ mod tests {
             )
         });
     }
+
+    #[test]
+    fn read_bit_positions_match_description() {
+        // bits _abcdefgh_ijklmnop_qrstuvwx_yzABCDEF become:
+        let bit_indices: [u32; 32] = [
+            8,  // i
+            9,  // j
+            10, // k
+            11, // l
+            12, // m
+            13, // n
+            14, // o
+            15, // p
+            0,  // a
+            1,  // b
+            2,  // c
+            3,  // d
+            4,  // e
+            5,  // f
+            6,  // g
+            7,  // h
+            24, // y
+            25, // z
+            26, // A
+            27, // B
+            28, // C
+            29, // D
+            30, // E
+            31, // F
+            16, // q
+            17, // r
+            18, // s
+            19, // t
+            20, // u
+            21, // v
+            22, // w
+            23, // x
+        ];
+        for (index, bit_index) in bit_indices.iter().copied().enumerate() {
+            let n = 1u32.rotate_right(1).rotate_right(bit_index);
+            let bytes = n.to_be_bytes();
+            eprintln!("index={index}, bit_index={bit_index}, bytes={n:032b}");
+
+            let mut bitstream = Bitstream::new(&bytes);
+
+            if index != 0 {
+                assert_eq!(bitstream.read_bits(index as u8), Ok(0));
+            }
+
+            assert_eq!(bitstream.read_bit(), Ok(1));
+
+            if let Some(remaining) = 31usize.checked_sub(index) {
+                assert_eq!(bitstream.read_bits(remaining as u8), Ok(0));
+            }
+        }
+    }
 }
