@@ -335,13 +335,18 @@ impl Lzxd {
         // to return a continous slice. if we're called on non-aligned, we could shift things
         // and align it.
 
-        // FIXME: Why is the last block's size observed to be one?
-        if self.current_block.size > 1 {
-            // Align the window up to 32KB.
-            // See https://github.com/Lonami/lzxd/issues/7 for details.
-            if let Some(len) = 0x8000usize.checked_sub(decoded_len) {
-                self.window.zero_extend(len);
-                decoded_len += len;
+        // Align the window up to 32KB.
+        // See https://github.com/Lonami/lzxd/issues/7 for details.
+        if let Some(pad_len) = 0x8000usize.checked_sub(decoded_len) {
+            if pad_len > 0 {
+                // At this point, we know the output block is not aligned to 32KB. We'll subtract
+                // the padding bytes from the input block's size (as they are implicitly read from the block)
+                // and then zero-extend the window.
+                let pad_len = std::cmp::min(pad_len, self.current_block.size as usize);
+                
+                self.current_block.size -= pad_len as u32;
+                self.window.zero_extend(pad_len);
+                decoded_len += pad_len;
             }
         }
 
