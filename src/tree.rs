@@ -29,7 +29,8 @@ impl CanonicalTree {
         }
     }
 
-    /// Create a new `Tree` instance from this cast that can be used to decode elements.
+    /// Create a new `Tree` instance from this cast that can be used to decode elements. If the
+    /// resulting tree is empty (all path lengths are 0), then `Ok(None)` is returned.
     ///
     /// This method transforms the canonical Huffman tree into a different structure that can
     /// be used to better decode elements.
@@ -87,9 +88,15 @@ impl CanonicalTree {
         }))
     }
 
+    /// Create a new `Tree` instance from this cast that can be used to decode elements.
+    ///
+    /// This method transforms the canonical Huffman tree into a different structure that can
+    /// be used to better decode elements.
+    // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
+    // > identical tree,
     pub fn create_instance(&self) -> Result<Tree, DecodeFailed> {
         self.create_instance_allow_empty()?
-            .ok_or(DecodeFailed::InvalidPathLengths)
+            .ok_or(DecodeFailed::EmptyTree)
     }
 
     // Note: the tree already exists and is used to apply the deltas.

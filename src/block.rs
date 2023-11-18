@@ -150,7 +150,11 @@ fn decode_element(
 
         let match_length = if length_header == 7 {
             // Length of the footer.
-            length_tree.unwrap().decode_element(bitstream)? + 7 + 2
+            length_tree
+                .ok_or(DecodeFailed::EmptyTree)?
+                .decode_element(bitstream)?
+                + 7
+                + 2
         } else {
             length_header + 2 // no length footer
                               // Decoding a match length (if a match length < 257).

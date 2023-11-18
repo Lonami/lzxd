@@ -112,6 +112,9 @@ pub enum DecodeFailed {
     /// When attempting to construct a decode tree, we encountered an invalid path length tree.
     InvalidPathLengths,
 
+    /// A required decode tree was empty (all path lengths were 0).
+    EmptyTree,
+
     /// The given window size was too small.
     WindowTooSmall,
 
@@ -137,6 +140,7 @@ impl fmt::Display for DecodeFailed {
             InvalidPretreeElement(elem) => write!(f, "found invalid pretree element {}", elem),
             InvalidPretreeRle => write!(f, "found invalid pretree rle element"),
             InvalidPathLengths => write!(f, "encountered invalid path lengths"),
+            EmptyTree => write!(f, "encountered empty decode tree"),
             WindowTooSmall => write!(f, "decode window was too small"),
             ChunkTooLong => write!(
                 f,
