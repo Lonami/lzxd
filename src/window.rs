@@ -95,20 +95,6 @@ impl Window {
         self.advance(1);
     }
 
-    #[allow(dead_code)]
-    pub fn zero_extend(&mut self, len: usize) {
-        if let Some(overflow) = len.checked_sub(self.buffer.len() - self.pos) {
-            self.buffer[self.pos..].iter_mut().for_each(|b| *b = 0);
-            self.buffer[..overflow].iter_mut().for_each(|b| *b = 0);
-            self.pos = overflow;
-        } else {
-            self.buffer[self.pos..self.pos + len]
-                .iter_mut()
-                .for_each(|b| *b = 0);
-            self.pos += len;
-        }
-    }
-
     pub fn copy_from_self(&mut self, offset: usize, length: usize) {
         // For the fast path:
         // * Source cannot wrap around
