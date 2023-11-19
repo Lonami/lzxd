@@ -90,7 +90,7 @@ impl<'a> Bitstream<'a> {
             let w0 = self.read_bits_oneword(16)? as u32;
             let w1 = self.read_bits_oneword(bits - 16)? as u32;
 
-            Ok((w1 << 16) | w0)
+            Ok((w0 << (bits - 16)) | w1)
         }
     }
 
@@ -131,10 +131,10 @@ impl<'a> Bitstream<'a> {
                 n: self.n,
                 remaining: self.remaining,
             };
-            let lo = advanced_stream.read_bits_oneword(16).unwrap() as u32;
-            let hi = advanced_stream.peek_bits_oneword(bits - 16) as u32;
+            let w0 = advanced_stream.read_bits_oneword(16).unwrap() as u32;
+            let w1 = advanced_stream.peek_bits_oneword(bits - 16) as u32;
 
-            (hi << 16) | lo
+            (w0 << (bits - 16)) | w1
         }
     }
 
