@@ -163,6 +163,7 @@ impl<'a> Bitstream<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         // > the output bitstream is padded with up to 15 bits of zeros to realign the bitstream
         // > on a 16-bit boundary (even byte boundary) for the next 32 KB of data.
