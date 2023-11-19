@@ -207,7 +207,7 @@ impl Lzxd {
 
             let e8_translation = bitstream.read_bit()? != 0;
             self.e8_translation_size = if e8_translation {
-                self.postprocess_chunk = Some(Box::new([0u8; MAX_CHUNK_SIZE]));
+                self.postprocess_chunk = Some(vec![0; MAX_CHUNK_SIZE].into_boxed_slice());
 
                 let hi = bitstream.read_bits(16)?;
                 let lo = bitstream.read_bits(16)?;
