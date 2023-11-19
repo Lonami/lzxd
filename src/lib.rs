@@ -79,10 +79,13 @@ pub struct Lzxd {
 
     /// This field will update after the first chunk is read, but will remain being `None`
     /// if the E8 Call Translation is not enabled for this stream.
-    e8_translation_size: Option<u32>,
+    e8_translation_size: Option<i32>,
 
     /// Current block.
     current_block: Block,
+
+    /// A buffer that can be used to hold postprocessed chunks.
+    postprocess_chunk: Option<Box<[u8]>>,
 }
 
 /// The error type used when decompression fails.
@@ -184,6 +187,7 @@ impl Lzxd {
             first_chunk_read: false,
             chunk_offset: 0,
             e8_translation_size: None,
+            postprocess_chunk: None,
             // Start with some dummy value.
             current_block: Block {
                 size: 0,
@@ -203,9 +207,11 @@ impl Lzxd {
 
             let e8_translation = bitstream.read_bit()? != 0;
             self.e8_translation_size = if e8_translation {
-                let high = bitstream.read_u16_le()? as u32;
-                let low = bitstream.read_u16_le()? as u32;
-                Some((high << 16) | low)
+                self.postprocess_chunk = Some(Box::new([0u8; MAX_CHUNK_SIZE]));
+
+                let hi = bitstream.read_bits(16)?;
+                let lo = bitstream.read_bits(16)?;
+                Some(((hi << 16) | lo) as i32)
             } else {
                 None
             };
@@ -216,16 +222,15 @@ impl Lzxd {
 
     /// Attempts to perform post-decompression E8 fixups on an output data buffer.
     fn postprocess<'a>(
-        e8_translation_size: Option<u32>,
+        translation_size: i32,
         chunk_offset: usize,
         idata: &'a mut [u8],
     ) -> Result<&'a [u8], DecodeFailed> {
-        let translation_size = match e8_translation_size {
-            // E8 fixups are disabled after 1GB of input data,
-            // or if the chunk size is too small.
-            Some(size) if chunk_offset < 0x4000_0000 && idata.len() > 10 => size,
-            _ => return Ok(idata),
-        };
+        // E8 fixups are disabled after 1GB of input data,
+        // or if the chunk size is too small.
+        if chunk_offset >= 0x4000_0000 || idata.len() <= 10 {
+            return Ok(idata);
+        }
 
         let mut processed = 0usize;
 
@@ -245,13 +250,12 @@ impl Lzxd {
 
             // Match. Fix up the following bytes.
             // N.B: 4-byte slice conversion to an array will not fail.
-            let abs_val = u32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
-
-            if (abs_val as usize) < current_pointer && (abs_val as u32) < translation_size {
-                let rel_val = if (abs_val as i32).is_positive() {
-                    abs_val.wrapping_sub(current_pointer as u32) as i32
+            let abs_val = i32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
+            if (abs_val >= -(current_pointer as i32)) && abs_val < translation_size {
+                let rel_val = if abs_val.is_positive() {
+                    abs_val.wrapping_sub(current_pointer as i32) as i32
                 } else {
-                    abs_val.wrapping_add(translation_size) as i32
+                    abs_val.wrapping_add(translation_size as i32) as i32
                 };
 
                 idata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
@@ -327,15 +331,20 @@ impl Lzxd {
             }
         }
 
-        // Finally, postprocess the output buffer (if necessary).
-        let res = Self::postprocess(
-            self.e8_translation_size,
-            self.chunk_offset,
-            self.window.past_view(decoded_len)?,
-        );
-
+        let chunk_offset = self.chunk_offset;
         self.chunk_offset += decoded_len;
-        res
+
+        if let Some(e8_translation_size) = self.e8_translation_size {
+            let postprocess_buf =
+                &mut self.postprocess_chunk.as_deref_mut().unwrap()[..decoded_len];
+
+            postprocess_buf.copy_from_slice(self.window.past_view(decoded_len)?);
+
+            // Finally, postprocess the output buffer (if necessary).
+            Self::postprocess(e8_translation_size, chunk_offset, postprocess_buf)
+        } else {
+            Ok(self.window.past_view(decoded_len)?)
+        }
     }
 }
 
