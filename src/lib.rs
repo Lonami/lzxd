@@ -88,9 +88,9 @@ pub struct Lzxd {
     postprocess_chunk: Option<Box<[u8]>>,
 }
 
-/// The error type used when decompression fails.
+/// Specific cause for decompression failure.
 #[derive(Debug, PartialEq)]
-pub enum DecodeFailed {
+enum DecodeFailed {
     /// The chunk length must be divisible by 2.
     OddLength,
 
@@ -155,6 +155,24 @@ impl fmt::Display for DecodeFailed {
 }
 
 impl std::error::Error for DecodeFailed {}
+
+/// The error type used when decompression fails.
+#[derive(Debug, PartialEq)]
+pub struct DecompressError(DecodeFailed);
+
+impl fmt::Display for DecompressError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for DecompressError {}
+
+impl From<DecodeFailed> for DecompressError {
+    fn from(value: DecodeFailed) -> Self {
+        Self(value)
+    }
+}
 
 impl Lzxd {
     /// Creates a new instance of the LZXD decoder state. The [`WindowSize`] must be obtained
@@ -272,7 +290,7 @@ impl Lzxd {
         &mut self,
         chunk: &[u8],
         output_len: usize,
-    ) -> Result<&[u8], DecodeFailed> {
+    ) -> Result<&[u8], DecompressError> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
         // > stream, which can represent less than 32 KB.
         //
@@ -286,7 +304,7 @@ impl Lzxd {
         //
         // TODO maybe the docs could clarify whether this length is compressed or not
         if chunk.len() % 2 != 0 {
-            return Err(DecodeFailed::OddLength);
+            return Err(DecodeFailed::OddLength.into());
         }
 
         let mut bitstream = Bitstream::new(chunk);
@@ -327,7 +345,7 @@ impl Lzxd {
             if let Some(value) = self.current_block.size.checked_sub(advance as u32) {
                 self.current_block.size = value;
             } else {
-                return Err(DecodeFailed::OverreadBlock);
+                return Err(DecodeFailed::OverreadBlock.into());
             }
         }
 
@@ -342,6 +360,7 @@ impl Lzxd {
 
             // Finally, postprocess the output buffer (if necessary).
             Self::postprocess(e8_translation_size, chunk_offset, postprocess_buf)
+                .map_err(DecompressError::from)
         } else {
             Ok(self.window.past_view(decoded_len)?)
         }
