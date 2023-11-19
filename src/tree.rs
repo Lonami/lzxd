@@ -29,21 +29,25 @@ impl CanonicalTree {
         }
     }
 
-    /// Create a new `Tree` instance from this cast that can be used to decode elements.
+    /// Create a new `Tree` instance from this cast that can be used to decode elements. If the
+    /// resulting tree is empty (all path lengths are 0), then `Ok(None)` is returned.
     ///
     /// This method transforms the canonical Huffman tree into a different structure that can
     /// be used to better decode elements.
     // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
     // > identical tree,
-    pub fn create_instance(&self) -> Result<Tree, DecodeFailed> {
+    pub fn create_instance_allow_empty(&self) -> Result<Option<Tree>, DecodeFailed> {
         // The ideas implemented by this method are heavily inspired from LeonBlade's xnbcli
         // on GitHub.
         //
         // The path lengths contains the bit indices or zero if its not present, so find the
         // highest path length to determine how big our tree needs to be.
         let largest_length =
-            NonZeroU8::new(*self.path_lengths.iter().max().expect("empty path lengths"))
-                .ok_or(DecodeFailed::InvalidPathLengths)?;
+            match NonZeroU8::new(*self.path_lengths.iter().max().expect("empty path lengths")) {
+                Some(x) => x,
+                // N.B: If all the path lengths are zero, then the tree is empty (which is allowed).
+                None => return Ok(None),
+            };
         let mut huffman_tree = vec![0; 1 << largest_length.get()];
 
         // > a zero path length indicates that the element has a zero frequency and is not
@@ -77,11 +81,22 @@ impl CanonicalTree {
             Err(DecodeFailed::InvalidPathLengths)?;
         }
 
-        Ok(Tree {
+        Ok(Some(Tree {
             path_lengths: self.path_lengths.clone(),
             largest_length,
             huffman_tree,
-        })
+        }))
+    }
+
+    /// Create a new `Tree` instance from this cast that can be used to decode elements.
+    ///
+    /// This method transforms the canonical Huffman tree into a different structure that can
+    /// be used to better decode elements.
+    // > an LZXD decoder uses only the path lengths of the Huffman tree to reconstruct the
+    // > identical tree,
+    pub fn create_instance(&self) -> Result<Tree, DecodeFailed> {
+        self.create_instance_allow_empty()?
+            .ok_or(DecodeFailed::EmptyTree)
     }
 
     // Note: the tree already exists and is used to apply the deltas.

@@ -63,9 +63,10 @@ const BASE_POSITION: [u32; 290] = [
 struct DecodeInfo<'a> {
     aligned_offset_tree: Option<&'a Tree>,
     main_tree: &'a Tree,
-    length_tree: &'a Tree,
+    length_tree: Option<&'a Tree>,
 }
 
+#[derive(Debug)]
 pub enum Decoded {
     Single(u8),
     Match { offset: usize, length: usize },
@@ -75,12 +76,12 @@ pub enum Decoded {
 pub enum Kind {
     Verbatim {
         main_tree: Tree,
-        length_tree: Tree,
+        length_tree: Option<Tree>,
     },
     AlignedOffset {
         aligned_offset_tree: Tree,
         main_tree: Tree,
-        length_tree: Tree,
+        length_tree: Option<Tree>,
     },
     Uncompressed {
         r: [u32; 3],
@@ -149,7 +150,11 @@ fn decode_element(
 
         let match_length = if length_header == 7 {
             // Length of the footer.
-            length_tree.decode_element(bitstream)? + 7 + 2
+            length_tree
+                .ok_or(DecodeFailed::EmptyTree)?
+                .decode_element(bitstream)?
+                + 7
+                + 2
         } else {
             length_header + 2 // no length footer
                               // Decoding a match length (if a match length < 257).
@@ -268,7 +273,7 @@ impl Block {
 
                 Kind::Verbatim {
                     main_tree: state.main_tree.create_instance()?,
-                    length_tree: state.length_tree.create_instance()?,
+                    length_tree: state.length_tree.create_instance_allow_empty()?,
                 }
             }
             0b010 => {
@@ -291,7 +296,7 @@ impl Block {
                 Kind::AlignedOffset {
                     aligned_offset_tree,
                     main_tree: state.main_tree.create_instance()?,
-                    length_tree: state.length_tree.create_instance()?,
+                    length_tree: state.length_tree.create_instance_allow_empty()?,
                 }
             }
             0b011 => {
@@ -328,7 +333,7 @@ impl Block {
                 DecodeInfo {
                     aligned_offset_tree: None,
                     main_tree,
-                    length_tree,
+                    length_tree: length_tree.as_ref(),
                 },
             ),
             Kind::AlignedOffset {
@@ -341,7 +346,7 @@ impl Block {
                 DecodeInfo {
                     aligned_offset_tree: Some(aligned_offset_tree),
                     main_tree,
-                    length_tree,
+                    length_tree: length_tree.as_ref(),
                 },
             ),
             Kind::Uncompressed { r: new_r } => {

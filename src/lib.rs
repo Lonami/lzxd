@@ -50,14 +50,14 @@ pub(crate) struct DecoderState {
 /// sequential order.
 ///
 /// ```no_run
-/// # fn get_compressed_chunk() -> Option<Vec<u8>> { unimplemented!() }
+/// # fn get_compressed_chunk() -> Option<(Vec<u8>, usize)> { unimplemented!() }
 /// # fn write_data(a: &[u8]) { unimplemented!() }
 /// use ::lzxd::{Lzxd, WindowSize};
 ///
 /// let mut lzxd = Lzxd::new(WindowSize::KB64);
 ///
-/// while let Some(chunk) = get_compressed_chunk() {
-///     let decompressed = lzxd.decompress_next(&chunk);
+/// while let Some((chunk, output_size)) = get_compressed_chunk() {
+///     let decompressed = lzxd.decompress_next(&chunk, output_size);
 ///     write_data(decompressed.unwrap());
 /// }
 /// ```
@@ -115,6 +115,9 @@ pub enum DecodeFailed {
     /// When attempting to construct a decode tree, we encountered an invalid path length tree.
     InvalidPathLengths,
 
+    /// A required decode tree was empty (all path lengths were 0).
+    EmptyTree,
+
     /// The given window size was too small.
     WindowTooSmall,
 
@@ -140,6 +143,7 @@ impl fmt::Display for DecodeFailed {
             InvalidPretreeElement(elem) => write!(f, "found invalid pretree element {}", elem),
             InvalidPretreeRle => write!(f, "found invalid pretree rle element"),
             InvalidPathLengths => write!(f, "encountered invalid path lengths"),
+            EmptyTree => write!(f, "encountered empty decode tree"),
             WindowTooSmall => write!(f, "decode window was too small"),
             ChunkTooLong => write!(
                 f,
@@ -264,7 +268,11 @@ impl Lzxd {
     }
 
     /// Decompresses the next compressed `chunk` from the LZXD data stream.
-    pub fn decompress_next(&mut self, chunk: &[u8]) -> Result<&[u8], DecodeFailed> {
+    pub fn decompress_next(
+        &mut self,
+        chunk: &[u8],
+        output_len: usize,
+    ) -> Result<&[u8], DecodeFailed> {
         // > A chunk represents exactly 32 KB of uncompressed data until the last chunk in the
         // > stream, which can represent less than 32 KB.
         //
@@ -286,7 +294,7 @@ impl Lzxd {
         self.try_read_first_chunk(&mut bitstream)?;
 
         let mut decoded_len = 0;
-        while !bitstream.is_empty() {
+        while decoded_len != output_len {
             if self.current_block.size == 0 {
                 self.current_block = Block::read(&mut bitstream, &mut self.state)?;
                 assert!(self.current_block.size != 0);
@@ -323,32 +331,6 @@ impl Lzxd {
             }
         }
 
-        // > To ensure that an exact number of input bytes represent an exact number of
-        // > output bytes for each chunk, after each 32 KB of uncompressed data is
-        // > represented in the output compressed bitstream, the output bitstream is padded
-        // > with up to 15 bits of zeros to realign the bitstream on a 16-bit boundary
-        // > (even byte boundary) for the next 32 KB of data. This results in a compressed
-        // > chunk of a byte-aligned size. The compressed chunk could be smaller than 32 KB
-        // > or larger than 32 KB if the data is incompressible when the chunk is not the
-        // > last one.
-        //
-        // That's the input chunk parsed which aligned to a byte-boundary already. There is
-        // no need to align the bitstream because on the next call it will be aligned.
-
-        // TODO last chunk may misalign this and on the next iteration we wouldn't be able
-        // to return a continous slice. if we're called on non-aligned, we could shift things
-        // and align it.
-
-        // FIXME: Why is the last block's size observed to be one?
-        if self.current_block.size > 1 {
-            // Align the window up to 32KB.
-            // See https://github.com/Lonami/lzxd/issues/7 for details.
-            if let Some(len) = 0x8000usize.checked_sub(decoded_len) {
-                self.window.zero_extend(len);
-                decoded_len += len;
-            }
-        }
-
         let chunk_offset = self.chunk_offset;
         self.chunk_offset += decoded_len;
 
@@ -378,7 +360,7 @@ mod tests {
         ];
 
         let mut lzxd = Lzxd::new(WindowSize::KB32); // size does not matter
-        let res = lzxd.decompress_next(&data);
+        let res = lzxd.decompress_next(&data, 3);
         assert_eq!(res.unwrap(), [b'a', b'b', b'c']);
     }
 
@@ -402,7 +384,7 @@ mod tests {
         ];
 
         let mut lzxd = Lzxd::new(WindowSize::KB32);
-        let res = lzxd.decompress_next(&data);
+        let res = lzxd.decompress_next(&data, 168);
         assert_eq!(
             res.unwrap(),
             b"This file has an E8 byte to test E8 translation, Xdddddddddddddddd\
