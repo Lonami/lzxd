@@ -44,6 +44,14 @@ pub(crate) struct DecoderState {
     length_tree: CanonicalTree,
 }
 
+struct PostProcessState {
+    /// The pointer in the file at which to stop performing E8 translation.
+    e8_translation_size: i32,
+
+    /// A buffer that can be used to hold postprocessed chunks.
+    data_chunk: Box<[u8]>,
+}
+
 /// The main interface to perform LZXD decompression.
 ///
 /// This structure stores the required state to process the compressed chunks of data in a
@@ -77,15 +85,12 @@ pub struct Lzxd {
     /// Has the very first chunk been read yet? Unlike the rest, it has additional data.
     first_chunk_read: bool,
 
-    /// This field will update after the first chunk is read, but will remain being `None`
-    /// if the E8 Call Translation is not enabled for this stream.
-    e8_translation_size: Option<i32>,
-
     /// Current block.
     current_block: Block,
 
-    /// A buffer that can be used to hold postprocessed chunks.
-    postprocess_chunk: Option<Box<[u8]>>,
+    /// Information and data related to E8 postprocessing. This is populated after
+    /// the first chunk is read.
+    postprocess: Option<PostProcessState>,
 }
 
 /// Specific cause for decompression failure.
@@ -204,8 +209,7 @@ impl Lzxd {
             r: [1, 1, 1],
             first_chunk_read: false,
             chunk_offset: 0,
-            e8_translation_size: None,
-            postprocess_chunk: None,
+            postprocess: None,
             // Start with some dummy value.
             current_block: Block {
                 size: 0,
@@ -224,12 +228,11 @@ impl Lzxd {
             self.first_chunk_read = true;
 
             let e8_translation = bitstream.read_bit()? != 0;
-            self.e8_translation_size = if e8_translation {
-                self.postprocess_chunk = Some(vec![0; MAX_CHUNK_SIZE].into_boxed_slice());
-
-                let hi = bitstream.read_bits(16)?;
-                let lo = bitstream.read_bits(16)?;
-                Some(((hi << 16) | lo) as i32)
+            self.postprocess = if e8_translation {
+                Some(PostProcessState {
+                    data_chunk: vec![0; MAX_CHUNK_SIZE].into_boxed_slice(),
+                    e8_translation_size: bitstream.read_bits(32)? as i32,
+                })
             } else {
                 None
             };
@@ -247,6 +250,7 @@ impl Lzxd {
         // E8 fixups are disabled after 1GB of input data,
         // or if the chunk size is too small.
         if chunk_offset >= 0x4000_0000 || idata.len() <= 10 {
+            // NOTE: This should not be reached since our caller should be checking these conditions.
             return Ok(idata);
         }
 
@@ -352,17 +356,26 @@ impl Lzxd {
         let chunk_offset = self.chunk_offset;
         self.chunk_offset += decoded_len;
 
-        if let Some(e8_translation_size) = self.e8_translation_size {
-            let postprocess_buf =
-                &mut self.postprocess_chunk.as_deref_mut().unwrap()[..decoded_len];
+        let view = self.window.past_view(decoded_len)?;
+        if let Some(postprocess) = self.postprocess.as_mut() {
+            let postprocess_buf = &mut postprocess.data_chunk[..decoded_len];
+            postprocess_buf.copy_from_slice(view);
 
-            postprocess_buf.copy_from_slice(self.window.past_view(decoded_len)?);
-
-            // Finally, postprocess the output buffer (if necessary).
-            Self::postprocess(e8_translation_size, chunk_offset, postprocess_buf)
+            // E8 fixups are disabled after 1GB of input data,
+            // or if the chunk size is too small.
+            if chunk_offset >= 0x4000_0000 || decoded_len <= 10 {
+                Ok(view)
+            } else {
+                // E8 fixups are enabled. Postprocess the output buffer.
+                Self::postprocess(
+                    postprocess.e8_translation_size,
+                    chunk_offset,
+                    postprocess_buf,
+                )
                 .map_err(DecompressError::from)
+            }
         } else {
-            Ok(self.window.past_view(decoded_len)?)
+            Ok(view)
         }
     }
 }
