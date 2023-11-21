@@ -351,14 +351,14 @@ impl Lzxd {
 
         let view = self.window.past_view(decoded_len)?;
         if let Some(postprocess) = self.postprocess.as_mut() {
-            let postprocess_buf = &mut postprocess.data_chunk[..decoded_len];
-            postprocess_buf.copy_from_slice(view);
-
             // E8 fixups are disabled after 1GB of input data,
             // or if the chunk size is too small.
             if chunk_offset >= 0x4000_0000 || decoded_len <= 10 {
                 Ok(view)
             } else {
+                let postprocess_buf = &mut postprocess.data_chunk[..decoded_len];
+                postprocess_buf.copy_from_slice(view);
+
                 // E8 fixups are enabled. Postprocess the output buffer.
                 Self::postprocess(
                     postprocess.e8_translation_size,
