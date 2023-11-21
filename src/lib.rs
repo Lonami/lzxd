@@ -247,13 +247,6 @@ impl Lzxd {
         chunk_offset: usize,
         idata: &'a mut [u8],
     ) -> Result<&'a [u8], DecodeFailed> {
-        // E8 fixups are disabled after 1GB of input data,
-        // or if the chunk size is too small.
-        if chunk_offset >= 0x4000_0000 || idata.len() <= 10 {
-            // NOTE: This should not be reached since our caller should be checking these conditions.
-            return Ok(idata);
-        }
-
         let mut processed = 0usize;
 
         // Find the next E8 match, or finish once there are no more E8 matches.
