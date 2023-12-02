@@ -22,6 +22,8 @@ jobs:
             host_target: x86_64-pc-windows-msvc
     steps:
     - uses: actions/checkout@v2
+      with:
+        lfs: 'true'
 
     - name: Install latest stable
       uses: actions-rs/toolchain@v1
