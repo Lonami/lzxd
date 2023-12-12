@@ -12,5 +12,6 @@ repository = "https://github.com/Lonami/lzxd"
 keywords = ["lzx", "lzxd", "xnb", "decompress"]
 categories = ["compression"]
 edition = "2018"
+exclude = ["/tests", "/testdata"]
 
 [dependencies]
