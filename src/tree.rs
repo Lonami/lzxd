@@ -1,7 +1,8 @@
-use crate::{Bitstream, DecodeFailed};
 use std::fmt;
 use std::num::NonZeroU8;
 use std::ops::Range;
+
+use crate::{Bitstream, DecodeFailed};
 
 /// The canonical tree cannot be used to decode elements. Instead, it behaves like a builder for
 /// instances of the actual tree that can decode elements efficiently.

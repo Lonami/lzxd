@@ -8,7 +8,7 @@ use crate::{Bitstream, DecodeFailed, MAX_CHUNK_SIZE};
 /// 32_768 and the size of the subject data. However, some implementations also seem to support
 /// a window size of less than 2^17, and this one is no exception.
 #[repr(u32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum WindowSize {
     /// Window size of 32 KB (2^15 bytes).
     KB32 = 0x0000_8000,
