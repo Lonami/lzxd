@@ -13,17 +13,18 @@
 //! [LZX DELTA Compression and Decompression]: https://docs.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-patch/cc78752a-b4af-4eee-88cb-01f4d8a4c2bf
 //! [UASDC]: https://ieeexplore.ieee.org/document/1055714
 //! [`Lzxd`]: struct.Lzxd.html
+use std::{convert::TryInto, fmt, mem};
+
+pub(crate) use bitstream::Bitstream;
+pub(crate) use block::{Block, Decoded, Kind as BlockKind};
+pub(crate) use tree::{CanonicalTree, Tree};
+use window::Window;
+pub use window::WindowSize;
+
 mod bitstream;
 mod block;
 mod tree;
 mod window;
-
-pub(crate) use bitstream::Bitstream;
-pub(crate) use block::{Block, Decoded, Kind as BlockKind};
-use std::{convert::TryInto, fmt};
-pub(crate) use tree::{CanonicalTree, Tree};
-use window::Window;
-pub use window::WindowSize;
 
 /// A chunk represents exactly 32 KB of uncompressed data until the last chunk in the stream,
 /// which can represent less than 32 KB.
@@ -242,11 +243,11 @@ impl Lzxd {
     }
 
     /// Attempts to perform post-decompression E8 fixups on an output data buffer.
-    fn postprocess<'a>(
+    fn postprocess(
         translation_size: i32,
         chunk_offset: usize,
-        idata: &'a mut [u8],
-    ) -> Result<&'a [u8], DecodeFailed> {
+        idata: &mut [u8],
+    ) -> Result<&[u8], DecodeFailed> {
         let mut processed = 0usize;
 
         // Find the next E8 match, or finish once there are no more E8 matches.
@@ -371,6 +372,11 @@ impl Lzxd {
             Ok(view)
         }
     }
+
+    pub fn reset(&mut self) {
+        let this = Self::new(self.state.window_size);
+        let _ = mem::replace(self, this);
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +391,22 @@ mod tests {
         ];
 
         let mut lzxd = Lzxd::new(WindowSize::KB32); // size does not matter
+        let res = lzxd.decompress_next(&data, 3);
+        assert_eq!(res.unwrap(), [b'a', b'b', b'c']);
+    }
+
+    #[test]
+    fn reset() {
+        let data = [
+            0x00, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, b'a', b'b', b'c', 0x00,
+        ];
+
+        let mut lzxd = Lzxd::new(WindowSize::KB32); // size does not matter
+        let res = lzxd.decompress_next(&data, 3);
+        assert_eq!(res.unwrap(), [b'a', b'b', b'c']);
+
+        lzxd.reset();
         let res = lzxd.decompress_next(&data, 3);
         assert_eq!(res.unwrap(), [b'a', b'b', b'c']);
     }
