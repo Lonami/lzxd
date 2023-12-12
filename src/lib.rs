@@ -373,8 +373,10 @@ impl Lzxd {
         }
     }
 
-    /// Quickly resets the state.
-    /// This is equivalent to dropping this object and then creating a new one.
+    /// Resets the decoder state.
+    ///
+    /// This is equivalent to calling [`Self::new`] with the same [`WindowSize`].
+    /// [`WindowSize`]: enum.WindowSize.html
     pub fn reset(&mut self) {
         let this = Self::new(self.state.window_size);
         let _ = mem::replace(self, this);
