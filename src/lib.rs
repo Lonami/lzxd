@@ -373,6 +373,8 @@ impl Lzxd {
         }
     }
 
+    /// Quickly resets the state.
+    /// This is equivalent to dropping this object and then creating a new one.
     pub fn reset(&mut self) {
         let this = Self::new(self.state.window_size);
         let _ = mem::replace(self, this);
