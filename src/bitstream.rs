@@ -19,14 +19,7 @@ pub struct Bitstream<'a> {
 }
 
 impl<'a> Bitstream<'a> {
-    /// # Panics
-    ///
-    /// Panics if `buffer` is not evenly divisible.
     pub fn new(buffer: &'a [u8]) -> Self {
-        if buffer.len() % 2 != 0 {
-            panic!("bitstream buffer must be evenly divisible");
-        }
-
         Self {
             buffer,
             n: 0,
@@ -149,8 +142,8 @@ impl<'a> Bitstream<'a> {
     }
 
     pub fn read_u24_be(&mut self) -> Result<u32, DecodeFailed> {
-        let hi = self.read_bits(16)? as u32;
-        let lo = self.read_bits(8)? as u32;
+        let hi = self.read_bits(16)?;
+        let lo = self.read_bits(8)?;
         Ok(hi << 8 | lo)
     }
 
@@ -169,15 +162,16 @@ impl<'a> Bitstream<'a> {
     ///
     /// If the output length is not evenly divisible, such padding byte will be discarded.
     pub fn read_raw(&mut self, output: &mut [u8]) -> Result<(), DecodeFailed> {
-        // Add 1 to the len if it's odd
-        let real_len = output.len() + output.len() % 2;
-
-        if self.buffer.len() < real_len {
+        if self.buffer.len() < output.len() {
             return Err(DecodeFailed::UnexpectedEof);
         }
-
         output.copy_from_slice(&self.buffer[..output.len()]);
-        self.buffer = &self.buffer[real_len..];
+
+        // Add 1 to the len if it's odd
+        self.buffer = &self.buffer[output.len()..];
+        if !self.buffer.is_empty() && output.len() % 2 != 0{
+            self.buffer = &self.buffer[1..];
+        }
         Ok(())
     }
 
