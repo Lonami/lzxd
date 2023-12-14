@@ -169,7 +169,7 @@ impl<'a> Bitstream<'a> {
 
         // Add 1 to the len if it's odd
         self.buffer = &self.buffer[output.len()..];
-        if !self.buffer.is_empty() && output.len() % 2 != 0{
+        if !self.buffer.is_empty() && output.len() % 2 != 0 {
             self.buffer = &self.buffer[1..];
         }
         Ok(())
