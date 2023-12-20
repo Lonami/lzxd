@@ -73,6 +73,7 @@ pub enum Decoded {
     Read(usize),
 }
 
+#[derive(Debug)]
 pub enum Kind {
     Verbatim {
         main_tree: Tree,
@@ -92,6 +93,7 @@ pub enum Kind {
 /// everything except the tail of the block data (either uncompressed data or token sequence).
 pub struct Block {
     /// Only 24 bits may be used.
+    pub remaining: u32,
     pub size: u32,
     pub kind: Kind,
 }
@@ -113,6 +115,7 @@ fn read_main_and_length_trees(
     // Pretree for length tree                           20 elements, 4 bits each
     // Path lengths of elements in length tree           Encoded using pretree
     // Token sequence (matches and literals)             Specified in section 2.6
+
     state
         .main_tree
         .update_range_with_pretree(bitstream, 0..256)?;
@@ -159,7 +162,7 @@ fn decode_element(
             length_header + 2 // no length footer
                               // Decoding a match length (if a match length < 257).
         };
-        assert!(match_length != 0);
+        assert_ne!(match_length, 0);
 
         let position_slot = (main_element - 256) >> 3;
 
@@ -191,11 +194,11 @@ fn decode_element(
                     aligned_bits = 0;
                 }
 
-                BASE_POSITION[position_slot as usize] + verbatim_bits as u32 + aligned_bits as u32
+                BASE_POSITION[position_slot as usize] + verbatim_bits + aligned_bits as u32
             } else {
                 // Block_type is a verbatim_block.
                 let verbatim_bits = bitstream.read_bits(offset_bits)?;
-                BASE_POSITION[position_slot as usize] + verbatim_bits as u32
+                BASE_POSITION[position_slot as usize] + verbatim_bits
             };
 
             // Decoding a match offset.
@@ -300,10 +303,7 @@ impl Block {
                 }
             }
             0b011 => {
-                if !bitstream.align() {
-                    bitstream.read_bits(16)?; // padding will be 1..=16, not 0
-                }
-
+                bitstream.align()?;
                 Kind::Uncompressed {
                     r: [
                         bitstream.read_u32_le()?,
@@ -315,7 +315,11 @@ impl Block {
             _ => return Err(DecodeFailed::InvalidBlock(kind)),
         };
 
-        Ok(Block { size, kind })
+        Ok(Block {
+            remaining: size,
+            size,
+            kind,
+        })
     }
 
     pub(crate) fn decode_element(
@@ -351,7 +355,7 @@ impl Block {
             ),
             Kind::Uncompressed { r: new_r } => {
                 r.copy_from_slice(new_r);
-                Ok(Decoded::Read(self.size as usize))
+                Ok(Decoded::Read(self.remaining as usize))
             }
         }
     }

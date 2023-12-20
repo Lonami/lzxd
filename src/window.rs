@@ -157,11 +157,7 @@ impl Window {
             let shift = len - self.pos;
             self.advance(shift);
 
-            let tmp = self.buffer[self.buffer.len() - shift..]
-                .into_iter()
-                .copied()
-                .collect::<Vec<_>>();
-
+            let tmp = self.buffer[self.buffer.len() - shift..].to_vec();
             self.buffer.copy_within(0..self.buffer.len() - shift, shift);
             self.buffer[..shift].copy_from_slice(&tmp);
         }

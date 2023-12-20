@@ -95,11 +95,8 @@ pub struct Lzxd {
 }
 
 /// Specific cause for decompression failure.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecodeFailed {
-    /// The chunk length must be divisible by 2.
-    OddLength,
-
     /// The chunk data caused a read of more items than the current block had in a single step.
     OverreadBlock,
 
@@ -138,7 +135,6 @@ impl fmt::Display for DecodeFailed {
         use DecodeFailed::*;
 
         match self {
-            OddLength => write!(f, "chunk length must be divisible by 2"),
             OverreadBlock => write!(
                 f,
                 "read more items than available in the block in a single step"
@@ -163,7 +159,7 @@ impl fmt::Display for DecodeFailed {
 impl std::error::Error for DecodeFailed {}
 
 /// The error type used when decompression fails.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DecompressError(DecodeFailed);
 
 impl fmt::Display for DecompressError {
@@ -213,6 +209,7 @@ impl Lzxd {
             postprocess: None,
             // Start with some dummy value.
             current_block: Block {
+                remaining: 0,
                 size: 0,
                 kind: BlockKind::Uncompressed { r: [1, 1, 1] },
             },
@@ -269,9 +266,9 @@ impl Lzxd {
             let abs_val = i32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
             if (abs_val >= -(current_pointer as i32)) && abs_val < translation_size {
                 let rel_val = if abs_val.is_positive() {
-                    abs_val.wrapping_sub(current_pointer as i32) as i32
+                    abs_val.wrapping_sub(current_pointer as i32)
                 } else {
-                    abs_val.wrapping_add(translation_size as i32) as i32
+                    abs_val.wrapping_add(translation_size)
                 };
 
                 idata[pos + 1..pos + 5].copy_from_slice(&rel_val.to_le_bytes());
@@ -301,9 +298,6 @@ impl Lzxd {
         // set to 0xff where it also includes the uncompressed chunk size.
         //
         // TODO maybe the docs could clarify whether this length is compressed or not
-        if chunk.len() % 2 != 0 {
-            return Err(DecodeFailed::OddLength.into());
-        }
 
         let mut bitstream = Bitstream::new(chunk);
 
@@ -311,9 +305,17 @@ impl Lzxd {
 
         let mut decoded_len = 0;
         while decoded_len != output_len {
-            if self.current_block.size == 0 {
+            if self.current_block.remaining == 0 {
+                // Re-align the bitstream to word
+                // Related: https://github.com/GNOME/gcab/blob/master/libgcab/decomp.c#L883.
+                // Related: https://github.com/kyz/libmspack/blob/master/libmspack/mspack/lzxd.c#L469
+                if matches!(self.current_block.kind, BlockKind::Uncompressed { .. })
+                    && self.current_block.size % 2 != 0
+                {
+                    bitstream.read_byte();
+                }
                 self.current_block = Block::read(&mut bitstream, &mut self.state)?;
-                assert!(self.current_block.size != 0);
+                assert_ne!(self.current_block.remaining, 0);
             }
 
             let decoded = self
@@ -338,10 +340,10 @@ impl Lzxd {
                 }
             };
 
-            assert!(advance != 0);
+            assert_ne!(advance, 0);
             decoded_len += advance;
-            if let Some(value) = self.current_block.size.checked_sub(advance as u32) {
-                self.current_block.size = value;
+            if let Some(value) = self.current_block.remaining.checked_sub(advance as u32) {
+                self.current_block.remaining = value;
             } else {
                 return Err(DecodeFailed::OverreadBlock.into());
             }
