@@ -49,6 +49,15 @@ impl<'a> Bitstream<'a> {
         Ok(self.n & 1)
     }
 
+    pub fn read_byte(&mut self) -> Option<u8> {
+        if self.buffer.is_empty() {
+            return None;
+        }
+        let byte = self.buffer[0];
+        self.buffer = &self.buffer[1..];
+        Some(byte)
+    }
+
     /// Read from the bistream, no more than 16 bits (one word).
     fn read_bits_oneword(&mut self, bits: u8) -> Result<u16, DecodeFailed> {
         assert!(bits <= 16);
@@ -147,31 +156,22 @@ impl<'a> Bitstream<'a> {
         Ok(hi << 8 | lo)
     }
 
-    pub fn align(&mut self) -> bool {
+    pub fn align(&mut self) -> Result<(), DecodeFailed> {
         if self.remaining == 0 {
-            false
+            self.read_bits(16)?;
         } else {
             self.remaining = 0;
-            true
         }
+        Ok(())
     }
 
     /// Copies from the current buffer to the destination output ignoring the representation.
-    ///
-    /// The buffer should be aligned beforehand, otherwise bits may be discarded.
-    ///
-    /// If the output length is not evenly divisible, such padding byte will be discarded.
     pub fn read_raw(&mut self, output: &mut [u8]) -> Result<(), DecodeFailed> {
         if self.buffer.len() < output.len() {
             return Err(DecodeFailed::UnexpectedEof);
         }
         output.copy_from_slice(&self.buffer[..output.len()]);
-
-        // Add 1 to the len if it's odd
         self.buffer = &self.buffer[output.len()..];
-        if !self.buffer.is_empty() && output.len() % 2 != 0 {
-            self.buffer = &self.buffer[1..];
-        }
         Ok(())
     }
 
@@ -255,7 +255,7 @@ mod tests {
         let mut bitstream = Bitstream::new(&bytes);
 
         assert_eq!(bitstream.read_bits(3), Ok(1));
-        bitstream.align();
+        bitstream.align().unwrap();
         assert_eq!(bitstream.read_bits(3), Ok(3));
     }
 
@@ -267,7 +267,7 @@ mod tests {
         bitstream.read_bits(3).unwrap();
         assert_ne!(bitstream.remaining, 0);
 
-        bitstream.align();
+        bitstream.align().unwrap();
         assert_eq!(bitstream.remaining, 0);
 
         bitstream.read_bits(16).unwrap();
