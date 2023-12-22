@@ -11,7 +11,7 @@ documentation = "https://docs.rs/lzxd"
 repository = "https://github.com/Lonami/lzxd"
 keywords = ["lzx", "lzxd", "xnb", "decompress"]
 categories = ["compression"]
-edition = "2018"
+edition = "2021"
 exclude = ["/tests", "/testdata"]
 
 [dependencies]
