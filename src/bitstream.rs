@@ -140,14 +140,10 @@ impl<'a> Bitstream<'a> {
         }
     }
 
-    pub fn read_u16_le(&mut self) -> Result<u16, DecodeFailed> {
-        Ok(self.read_bits_oneword(16)?.swap_bytes())
-    }
-
     pub fn read_u32_le(&mut self) -> Result<u32, DecodeFailed> {
-        let lo = self.read_u16_le()? as u32;
-        let hi = self.read_u16_le()? as u32;
-        Ok((hi << 16) | lo)
+        let lo = self.read_bits_oneword(16)?.to_le_bytes();
+        let hi = self.read_bits_oneword(16)?.to_le_bytes();
+        Ok(u32::from_le_bytes([lo[0], lo[1], hi[0], hi[1]]))
     }
 
     pub fn read_u24_be(&mut self) -> Result<u32, DecodeFailed> {
@@ -205,35 +201,11 @@ mod tests {
     }
 
     #[test]
-    fn read_16le_aligned() {
-        let ns = [0b11100000_00000111_u16, 0b00011111_11111000];
-        let mut bytes = Vec::with_capacity(ns.len() * 2);
-        ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
-
-        let mut bitstream = Bitstream::new(&bytes);
-        assert_eq!(bitstream.read_u16_le(), Ok(0b00000111_11100000));
-        assert_eq!(bitstream.read_u16_le(), Ok(0b11111000_00011111));
-    }
-
-    #[test]
-    fn read_16le_unaligned() {
-        let ns = [0b00000000000_10001u16, 0b10000000001_00000];
-        let mut bytes = Vec::with_capacity(ns.len() * 2);
-        ns.iter().for_each(|n| bytes.extend(&n.to_le_bytes()));
-
-        let mut bitstream = Bitstream::new(&bytes);
-
-        assert_eq!(bitstream.read_bits(11), Ok(0));
-        assert_eq!(bitstream.read_u16_le(), Ok(0b00000001_10001_100));
-        assert_eq!(bitstream.read_bits(5), Ok(0));
-    }
-
-    #[test]
     fn read_32le() {
         let bytes = [0x56, 0x78, 0x12, 0x34];
         let mut bitstream = Bitstream::new(&bytes);
 
-        assert_eq!(bitstream.read_u32_le(), Ok(0x12345678));
+        assert_eq!(bitstream.read_u32_le(), Ok(873625686));
     }
 
     #[test]
