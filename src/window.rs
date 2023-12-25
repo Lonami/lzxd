@@ -351,13 +351,13 @@ mod tests {
     #[test]
     fn check_past_view_new_max_size() {
         let mut window = WindowSize::KB32.create_buffer();
-        assert!(matches!(window.past_view(1 << 15), Ok(_)));
+        assert!(window.past_view(1 << 15).is_ok());
     }
 
     #[test]
     fn check_past_view_shifted_max_size() {
         let mut window = WindowSize::KB32.create_buffer();
         window.pos = 123;
-        assert!(matches!(window.past_view(1 << 15), Ok(_)));
+        assert!(window.past_view(1 << 15).is_ok());
     }
 }
