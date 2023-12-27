@@ -13,7 +13,7 @@
 //! [LZX DELTA Compression and Decompression]: https://docs.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-patch/cc78752a-b4af-4eee-88cb-01f4d8a4c2bf
 //! [UASDC]: https://ieeexplore.ieee.org/document/1055714
 //! [`Lzxd`]: struct.Lzxd.html
-use std::{convert::TryInto, fmt, mem};
+use std::{fmt, mem};
 
 pub(crate) use bitstream::Bitstream;
 pub(crate) use block::{Block, Decoded, Kind as BlockKind};
@@ -254,7 +254,7 @@ impl Lzxd {
             .map(|pos| processed + pos)
         {
             // N.B: E8 fixups are only performed for up to 10 bytes before the end of a chunk.
-            if idata.len() - pos < 10 {
+            if idata.len() - pos <= 10 {
                 break;
             }
 
@@ -262,8 +262,12 @@ impl Lzxd {
             let current_pointer = chunk_offset + pos;
 
             // Match. Fix up the following bytes.
-            // N.B: 4-byte slice conversion to an array will not fail.
-            let abs_val = i32::from_le_bytes(idata[pos + 1..pos + 5].try_into().unwrap());
+            let abs_val = i32::from_le_bytes([
+                idata[pos + 1],
+                idata[pos + 2],
+                idata[pos + 3],
+                idata[pos + 4],
+            ]);
             if (abs_val >= -(current_pointer as i32)) && abs_val < translation_size {
                 let rel_val = if abs_val.is_positive() {
                     abs_val.wrapping_sub(current_pointer as i32)
@@ -363,12 +367,12 @@ impl Lzxd {
                 postprocess_buf.copy_from_slice(view);
 
                 // E8 fixups are enabled. Postprocess the output buffer.
-                Self::postprocess(
+                let view = Self::postprocess(
                     postprocess.e8_translation_size,
                     chunk_offset,
                     postprocess_buf,
-                )
-                .map_err(DecompressError::from)
+                )?;
+                Ok(view)
             }
         } else {
             Ok(view)
