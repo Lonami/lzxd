@@ -96,7 +96,7 @@ pub struct Lzxd {
 
 /// Specific cause for decompression failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DecodeFailed {
+pub enum DecodeFailed {
     /// The chunk data caused a read of more items than the current block had in a single step.
     OverreadBlock,
 
