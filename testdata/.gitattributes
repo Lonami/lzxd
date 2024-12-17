@@ -1,2 +1,0 @@
-*.lzx filter=lfs diff=lfs merge=lfs -text
-*.out filter=lfs diff=lfs merge=lfs -text
