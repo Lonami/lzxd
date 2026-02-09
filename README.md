@@ -1,3 +1,7 @@
+Moved to https://codeberg.org/Lonami/lzxd. The GitHub repository may be deleted in the future.
+
+---
+
 # lzxd
 
 A Rust implementation of [Microsoft's lzxd encoding][1], based in the description and code of
